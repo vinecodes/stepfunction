@@ -1,0 +1,30 @@
+[project]
+name = "StepFunction"
+version = "0.0.1"
+authors = [{ name = "Vineeth Penugonda" }]
+description = "Step Function Workflow Orchestration Library"
+readme = "README.md"
+keywords = ["StepFunction", "Workflow", "Orchestration", "Library"]
+requires-python = ">=3.12"
+dependencies = ["graphviz === 0.20.3"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Development Status :: Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Libraries"
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["stepfunction.*"]
+
+[project.urls]
+Homepage = "https://github.com/vinecodes/stepfunction"
+Issues = "https://github.com/vinecodes/stepfunction/issues"
+Blog_Post = "https://blog.vineethp.com/posts/introducingstepfunction/"
