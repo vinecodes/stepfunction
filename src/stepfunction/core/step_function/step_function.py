@@ -8,12 +8,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from inspect import iscoroutinefunction
 from typing import Any, Callable, Dict, Optional, Union
 
-from stepfunction.core.visualizer import Visualizer
-
 from stepfunction.constants.enums import StepFunctionStatus
+from stepfunction.core.visualizer import Visualizer
 from stepfunction.exceptions.step_errors import (ParallelStepExecutionError,
                                                  StepExecutionError)
 from stepfunction.types.step_types import StepParams
+from stepfunction.utils.logger import setup_logger
 
 
 class StepFunction:
