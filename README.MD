@@ -6,8 +6,6 @@
 
 `StepFunction` is a Python library for orchestrating complex workflows through a step-by-step process. It allows for easy management of sequential and parallel tasks with robust error handling and branching. The library is inspired by AWS Step Functions but implemented as a Python-native solution to orchestrate workflows across any environment.
 
-Please read the blog post for further understanding of usage of the library.
-
 ## Features
 
 - **Sequential and Parallel Execution**: Run steps one after another or in parallel.
