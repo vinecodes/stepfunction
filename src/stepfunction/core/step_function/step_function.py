@@ -199,8 +199,7 @@ class StepFunction:
                     self.__context[self.__current_step] = results
 
                     self.__logger.info(
-                        f"Parallel step '{
-                            self.__current_step}' succeeded with results: {results}"
+                        f"Parallel step '{self.__current_step}' succeeded with results: {results}"
                     )
                 else:
                     result = await self._execute_step(step["func"], self.__last_result)
@@ -226,8 +225,7 @@ class StepFunction:
 
                 if step["on_failure"]:
                     self.__logger.exception(
-                        f"Executing failure step: {
-                            step['on_failure']} for '{self.__current_step}'"
+                        f"Executing failure step: {step['on_failure']} for '{self.__current_step}'"
                     )
 
                     self.__current_step = step["on_failure"]
@@ -239,8 +237,7 @@ class StepFunction:
                         f"StepFunction - {self.__name} - Status - {self.__status.value}")
                 else:
                     self.__logger.exception(
-                        f"No failure step defined for '{
-                            self.__current_step}'. Raising Exception."
+                        f"No failure step defined for '{self.__current_step}'. Raising Exception."
                     )
 
                     self.__status = StepFunctionStatus.FAILED
@@ -318,8 +315,8 @@ class StepFunction:
 
         output_file_name = visualizer.output_file_name
 
-        self.__logger.debug(f"Rendered the step function to file: {
-            output_file_name}")
+        self.__logger.debug(
+            f"Rendered the step function to file: {output_file_name}")
 
     def visualize_to_string(self):
         """Visualize the workflow as a string."""

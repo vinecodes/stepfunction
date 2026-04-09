@@ -3,13 +3,15 @@
 import logging
 import logging.config
 
+from typing import Optional
+
 from stepfunction.utils.constants import (DEFAULT_LOG_LEVEL,
                                           DEFAULT_LOGGING_FORMAT,
                                           ENVIRONMENT_VARIABLE_LOG_LEVEL)
 from stepfunction.utils.utils import get_environment_variable
 
 
-def setup_logger(name: str | None = None, log_format: str = DEFAULT_LOGGING_FORMAT) -> logging.Logger:
+def setup_logger(name: Optional[str] = None, log_format: str = DEFAULT_LOGGING_FORMAT) -> logging.Logger:
     """
     Set up and return a logger with the given name.
     If no name is provided, return the root logger.
