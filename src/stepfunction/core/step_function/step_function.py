@@ -9,7 +9,6 @@ from inspect import iscoroutinefunction
 from typing import Any, Callable, Dict, Optional, Union
 
 from stepfunction.constants.enums import StepFunctionStatus
-from stepfunction.core.visualizer import Visualizer
 from stepfunction.exceptions.step_errors import (ParallelStepExecutionError,
                                                  StepExecutionError)
 from stepfunction.types.step_types import StepParams
@@ -303,6 +302,8 @@ class StepFunction:
 
     def visualize(self):
         """Visualize the workflow."""
+        from stepfunction.core.visualizer import Visualizer
+
         visualizer = Visualizer(self.__name, self.__steps)
 
         self.__logger.debug("Visualizing the step function")
@@ -320,6 +321,8 @@ class StepFunction:
 
     def visualize_to_string(self):
         """Visualize the workflow as a string."""
+        from stepfunction.core.visualizer import Visualizer
+
         visualizer = Visualizer(self.__name, self.__steps)
 
         self.__logger.debug("Visualizing the step function")
