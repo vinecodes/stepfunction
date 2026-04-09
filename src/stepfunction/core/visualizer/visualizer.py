@@ -98,8 +98,8 @@ class Visualizer:
 
         file_path = kwargs.get(
             'file_path', f"{current_dir}/{DEFAULT_VISUALIZER_FOLDER}")
-        file_name = kwargs.get('file_name', f"{self.graph_name}.{
-                               DEFAULT_VISUALIZER_EXTENSION}")
+        file_name = kwargs.get(
+            'file_name', f"{self.graph_name}.{DEFAULT_VISUALIZER_EXTENSION}")
 
         self.__output_file_path = file_path
         self.__output_file_name = file_name
