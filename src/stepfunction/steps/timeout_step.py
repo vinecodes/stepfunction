@@ -11,6 +11,7 @@ from typing import Any, Callable
 from stepfunction.constants.enums import StepType
 from stepfunction.steps.base import BaseStep
 from stepfunction.steps.exceptions import StepTimeoutError
+from stepfunction.utils.logger import setup_logger
 
 
 class TimeoutStep(BaseStep):
@@ -39,6 +40,7 @@ class TimeoutStep(BaseStep):
 
         self.func = func
         self.timeout = timeout
+        self.__logger = setup_logger(__name__)
 
     def build(self) -> Callable[[Any], Any]:
         """Return an async function that enforces a timeout on ``func``."""
@@ -46,6 +48,7 @@ class TimeoutStep(BaseStep):
         timeout = self.timeout
 
         async def run(input_value: Any) -> Any:
+            self.__logger.debug(f"TimeoutStep - executing with timeout of {timeout}s")
             try:
                 if iscoroutinefunction(func):
                     return await wait_for(func(input_value), timeout=timeout)
@@ -56,6 +59,7 @@ class TimeoutStep(BaseStep):
                         timeout=timeout,
                     )
             except AsyncTimeoutError:
+                self.__logger.error(f"TimeoutStep - exceeded timeout of {timeout}s")
                 raise StepTimeoutError(timeout)
 
         return run

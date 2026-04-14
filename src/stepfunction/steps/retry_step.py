@@ -9,6 +9,7 @@ from typing import Any, Callable, Optional
 
 from stepfunction.constants.enums import StepType
 from stepfunction.steps.base import BaseStep
+from stepfunction.utils.logger import setup_logger
 
 
 class RetryStep(BaseStep):
@@ -43,6 +44,7 @@ class RetryStep(BaseStep):
         self.func = func
         self.max_retries = max_retries
         self.delay = delay
+        self.__logger = setup_logger(__name__)
 
     def build(self) -> Callable[[Any], Any]:
         """Return an async function that retries ``func`` on failure."""
@@ -51,6 +53,9 @@ class RetryStep(BaseStep):
         delay = self.delay
 
         async def run(input_value: Any) -> Any:
+            self.__logger.debug(
+                f"RetryStep - executing with max_retries={max_retries}, delay={delay}s"
+            )
             last_exc: Optional[Exception] = None
 
             for attempt in range(max_retries + 1):
@@ -60,9 +65,14 @@ class RetryStep(BaseStep):
                     return func(input_value)
                 except Exception as exc:
                     last_exc = exc
+                    self.__logger.warning(
+                        f"RetryStep - attempt {attempt + 1}/{max_retries + 1} failed: {exc}"
+                    )
                     if attempt < max_retries:
+                        self.__logger.debug(f"RetryStep - retrying in {delay}s")
                         await sleep(delay)
 
+            self.__logger.error(f"RetryStep - all {max_retries + 1} attempts exhausted")
             raise last_exc
 
         return run
