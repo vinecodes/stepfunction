@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from stepfunction.constants.enums import StepType
 from stepfunction.steps.base import BaseStep
+from stepfunction.utils.logger import setup_logger
 
 
 class WaitStep(BaseStep):
@@ -29,13 +30,16 @@ class WaitStep(BaseStep):
         if duration < 0:
             raise ValueError("duration must be a non-negative number")
         self.duration = duration
+        self.__logger = setup_logger(__name__)
 
     def build(self) -> Callable[[Any], Any]:
         """Return an async function that sleeps for ``duration`` seconds."""
         duration = self.duration
 
         async def wait(input_value: Any) -> Any:
+            self.__logger.debug(f"WaitStep - sleeping for {duration}s")
             await sleep(duration)
+            self.__logger.debug(f"WaitStep - resumed after {duration}s")
             return input_value
 
         return wait
