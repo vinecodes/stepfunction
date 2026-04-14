@@ -1,0 +1,41 @@
+"""WaitStep — a built-in step that pauses execution for a fixed interval.
+
+Author: Vineeth Penugonda
+"""
+
+import asyncio
+from typing import Any, Callable
+
+from stepfunction.constants.enums import StepType
+from stepfunction.steps.base import BaseStep
+
+
+class WaitStep(BaseStep):
+    """A step that pauses workflow execution for a fixed duration.
+
+    The input value is passed through unchanged so the next step receives
+    exactly what the previous step produced.
+
+    Args:
+        duration (float): Number of seconds to wait before proceeding.
+
+    Example:
+        sf.add_step("pause", WaitStep(duration=5), next_step="next_step")
+    """
+
+    step_type: StepType = StepType.INBUILT
+
+    def __init__(self, duration: float):
+        if duration < 0:
+            raise ValueError("duration must be a non-negative number")
+        self.duration = duration
+
+    def build(self) -> Callable[[Any], Any]:
+        """Return an async function that sleeps for ``duration`` seconds."""
+        duration = self.duration
+
+        async def wait(input_value: Any) -> Any:
+            await asyncio.sleep(duration)
+            return input_value
+
+        return wait
