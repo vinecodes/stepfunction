@@ -5,7 +5,7 @@ Author: Vineeth Penugonda
 
 from asyncio import sleep
 from inspect import iscoroutinefunction
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from stepfunction.constants.enums import StepType
 from stepfunction.steps.base import BaseStep
@@ -51,7 +51,7 @@ class RetryStep(BaseStep):
         delay = self.delay
 
         async def run(input_value: Any) -> Any:
-            last_exc: Exception = None
+            last_exc: Optional[Exception] = None
 
             for attempt in range(max_retries + 1):
                 try:
