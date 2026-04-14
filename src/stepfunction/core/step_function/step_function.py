@@ -1,16 +1,18 @@
-""" Module to define the StepFunction class. 
+"""Module to define the StepFunction class.
 
-    Author: Vineeth Penugonda
+Author: Vineeth Penugonda
 """
 
-
+from asyncio import run as asyncio_run
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from inspect import iscoroutinefunction
 from typing import Any, Callable, Dict, Optional, Union
 
 from stepfunction.constants.enums import StepFunctionStatus
-from stepfunction.exceptions.step_errors import (ParallelStepExecutionError,
-                                                 StepExecutionError)
+from stepfunction.exceptions.step_errors import (
+    ParallelStepExecutionError,
+    StepExecutionError,
+)
 from stepfunction.types.step_types import StepParams
 from stepfunction.utils.logger import setup_logger
 
@@ -90,7 +92,7 @@ class StepFunction:
     Parallel Example:
         step_function.add_step("Step1", func1, parallel=True)
         step_function.add_step("ParallelStep", {
-            "task1": func2, 
+            "task1": func2,
             "task2": func3
         }, next_step="Step2", parallel=True)
 
@@ -102,7 +104,7 @@ class StepFunction:
 
     Status Example:
         status = step_function.status  # Will be StepFunctionStatus.INITIALIZED, StepFunctionStatus.RUNNING, StepFunctionStatus.COMPLETED, or StepFunctionStatus.FAILED.
-"""
+    """
 
     def __init__(self, name: str):
         self.__name = name  # Name of the step function
@@ -119,7 +121,8 @@ class StepFunction:
         self.__logger = setup_logger(__name__)
 
         self.__logger.debug(
-            f"StepFunction - {self.__name} - Status - {self.__status.value}")
+            f"StepFunction - {self.__name} - Status - {self.__status.value}"
+        )
 
     def add_step(
         self,
@@ -145,7 +148,13 @@ class StepFunction:
             "stop_on_failure": stop_on_failure,
         }
 
-    def add_sub_step_function(self, name: str, sub_step_function: "StepFunction", next_step: Optional[str] = None, on_failure: Optional[str] = None):
+    def add_sub_step_function(
+        self,
+        name: str,
+        sub_step_function: "StepFunction",
+        next_step: Optional[str] = None,
+        on_failure: Optional[str] = None,
+    ):
         """Add a sub-step function to the workflow."""
 
         if name in self.__steps:
@@ -167,7 +176,7 @@ class StepFunction:
             "branch": None,
             "parallel": False,
             "stop_on_failure": False,
-            "is_sub_step_function": True
+            "is_sub_step_function": True,
         }
 
     def set_start_step(self, name: str):
@@ -183,7 +192,8 @@ class StepFunction:
         self.__status = StepFunctionStatus.RUNNING
 
         self.__logger.debug(
-            f"StepFunction - {self.__name} - Status - {self.__status.value}")
+            f"StepFunction - {self.__name} - Status - {self.__status.value}"
+        )
 
         self.__last_result = initial_input
 
@@ -192,7 +202,8 @@ class StepFunction:
             try:
                 if step["parallel"]:
                     results = self._execute_parallel(
-                        step["func"], step["stop_on_failure"])
+                        step["func"], step["stop_on_failure"]
+                    )
 
                     self.__last_result = results
                     self.__context[self.__current_step] = results
@@ -206,12 +217,10 @@ class StepFunction:
                     self.__last_result = result
                     self.__context[self.__current_step] = result
 
-                    self.__logger.info(
-                        f"Step '{self.__current_step}' succeeded"
-                    )
+                    self.__logger.info(f"Step '{self.__current_step}' succeeded")
 
-                if step['branch'] and result in step['branch']:
-                    self.__current_step = step['branch'][result]
+                if step["branch"] and result in step["branch"]:
+                    self.__current_step = step["branch"][result]
                 else:
                     self.__current_step = step["next_step"]
 
@@ -233,7 +242,8 @@ class StepFunction:
                     self.__status = StepFunctionStatus.FAILED
 
                     self.__logger.debug(
-                        f"StepFunction - {self.__name} - Status - {self.__status.value}")
+                        f"StepFunction - {self.__name} - Status - {self.__status.value}"
+                    )
                 else:
                     self.__logger.exception(
                         f"No failure step defined for '{self.__current_step}'. Raising Exception."
@@ -242,7 +252,8 @@ class StepFunction:
                     self.__status = StepFunctionStatus.FAILED
 
                     self.__logger.debug(
-                        f"StepFunction - {self.__name} - Status - {self.__status.value}")
+                        f"StepFunction - {self.__name} - Status - {self.__status.value}"
+                    )
 
                     raise StepExecutionError(exc)
 
@@ -252,24 +263,34 @@ class StepFunction:
                 self.__status = StepFunctionStatus.COMPLETED
 
                 self.__logger.debug(
-                    f"StepFunction - {self.__name} - Status - {self.__status.value}")
+                    f"StepFunction - {self.__name} - Status - {self.__status.value}"
+                )
 
     async def _execute_step(self, func: Callable, input_value: Any):
-        """ Execute a single step, handling async functions. """
+        """Execute a single step, handling async functions."""
         if iscoroutinefunction(func):
             return await func(input_value)
         else:
             return func(input_value)
 
-    def _execute_parallel(self, func_dict: Dict[str, Callable[[Any], Any]], stop_on_failure: bool = False):
+    def _execute_parallel(
+        self, func_dict: Dict[str, Callable[[Any], Any]], stop_on_failure: bool = False
+    ):
         """Execute the steps in parallel."""
         results = {}
         errors = []
         should_stop_execution = False
 
+        def _run(func, arg):
+            if iscoroutinefunction(func):
+                return asyncio_run(func(arg))
+            return func(arg)
+
         with ThreadPoolExecutor() as executor:
-            futures = {executor.submit(
-                func, self.__last_result): step_name for step_name, func in func_dict.items()}
+            futures = {
+                executor.submit(_run, func, self.__last_result): step_name
+                for step_name, func in func_dict.items()
+            }
 
             for future in as_completed(futures):
                 step_name = futures[future]
@@ -282,7 +303,8 @@ class StepFunction:
                     results[step_name] = result
                 except Exception as exc:
                     self.__logger.exception(
-                        f"Parallel task '{step_name}' failed: {exc}")
+                        f"Parallel task '{step_name}' failed: {exc}"
+                    )
 
                     results[step_name] = exc.args[0]
 
@@ -316,8 +338,7 @@ class StepFunction:
 
         output_file_name = visualizer.output_file_name
 
-        self.__logger.debug(
-            f"Rendered the step function to file: {output_file_name}")
+        self.__logger.debug(f"Rendered the step function to file: {output_file_name}")
 
     def visualize_to_string(self):
         """Visualize the workflow as a string."""
@@ -333,32 +354,27 @@ class StepFunction:
 
     @property
     def name(self):
-        """ Returns the name of the step function. 
-        """
+        """Returns the name of the step function."""
         return self.__name
 
     @property
     def steps(self):
-        """ Returns the steps of the step function. 
-        """
+        """Returns the steps of the step function."""
         return self.__steps
 
     @property
     def last_result(self):
-        """ Returns the result of the last step.
-        """
+        """Returns the result of the last step."""
         return self.__last_result
 
     @property
     def context(self):
-        """ Returns the context of the step function.
-        """
+        """Returns the context of the step function."""
         return self.__context
 
     @property
     def status(self):
-        """ Returns the status of the step function.
-        """
+        """Returns the status of the step function."""
         return self.__status
 
     def __str__(self):
