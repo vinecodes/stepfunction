@@ -312,6 +312,8 @@ class StepFunction:
 
                     if stop_on_failure:
                         should_stop_execution = True
+                        for f in futures:
+                            f.cancel()
 
         if errors:
             self.__logger.error(f"Some parallel tasks failed: {errors}")
