@@ -219,10 +219,15 @@ class StepFunction:
 
                     self.__logger.info(f"Step '{self.__current_step}' succeeded")
 
-                if step["branch"] and result in step["branch"]:
-                    self.__current_step = step["branch"][result]
-                else:
-                    self.__current_step = step["next_step"]
+                next_step = None
+
+                if step["branch"]:
+                    if callable(step["branch"]):
+                        next_step = step["branch"](self.__last_result)
+                    else:
+                        next_step = step["branch"].get(self.__last_result)
+
+                self.__current_step = next_step or step["next_step"]
 
             except Exception as exc:
                 self.__logger.exception(
