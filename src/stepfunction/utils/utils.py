@@ -1,9 +1,10 @@
 """This module contains utility functions for the stepfunction package."""
 
 from os import getenv
+from typing import Optional
 
 
-def get_environment_variable(name: str, default: str = None) -> str:
+def get_environment_variable(name: str, default: Optional[str] = None) -> Optional[str]:
     """
     Returns the value of the environment variable with the given name.
 
