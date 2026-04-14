@@ -1,4 +1,4 @@
-""" Constants for the project. """
+"""Constants for the project."""
 
 # Logging
 DEFAULT_LOG_LEVEL = "INFO"
