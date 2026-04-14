@@ -1,24 +1,28 @@
-""" Module for setting up loggers. """
+"""Module for setting up loggers."""
 
 import logging
 import logging.config
-
 from typing import Optional
 
-from stepfunction.utils.constants import (DEFAULT_LOG_LEVEL,
-                                          DEFAULT_LOGGING_FORMAT,
-                                          ENVIRONMENT_VARIABLE_LOG_LEVEL)
+from stepfunction.utils.constants import (
+    DEFAULT_LOG_LEVEL,
+    DEFAULT_LOGGING_FORMAT,
+    ENVIRONMENT_VARIABLE_LOG_LEVEL,
+)
 from stepfunction.utils.utils import get_environment_variable
 
 
-def setup_logger(name: Optional[str] = None, log_format: str = DEFAULT_LOGGING_FORMAT) -> logging.Logger:
+def setup_logger(
+    name: Optional[str] = None, log_format: str = DEFAULT_LOGGING_FORMAT
+) -> logging.Logger:
     """
     Set up and return a logger with the given name.
     If no name is provided, return the root logger.
     """
 
     LOG_LEVEL = get_environment_variable(
-        ENVIRONMENT_VARIABLE_LOG_LEVEL, DEFAULT_LOG_LEVEL)
+        ENVIRONMENT_VARIABLE_LOG_LEVEL, DEFAULT_LOG_LEVEL
+    )
 
     logging_config = {
         "version": 1,
@@ -44,7 +48,6 @@ def setup_logger(name: Optional[str] = None, log_format: str = DEFAULT_LOGGING_F
                 "handlers": ["console"],
                 "propagate": False,
             },
-
             "botocore": {
                 "level": "WARNING",  # Set level to WARNING to ignore DEBUG logs
                 "handlers": ["console"],
