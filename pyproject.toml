@@ -1,6 +1,6 @@
 [project]
 name = "stepfunction"
-version = "0.0.4"
+version = "0.0.5"
 authors = [{ name = "Vineeth Penugonda" }]
 description = "Step Function Workflow Orchestration Library"
 readme = "README.md"

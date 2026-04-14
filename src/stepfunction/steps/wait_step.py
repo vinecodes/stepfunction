@@ -3,7 +3,7 @@
 Author: Vineeth Penugonda
 """
 
-import asyncio
+from asyncio import sleep
 from typing import Any, Callable
 
 from stepfunction.constants.enums import StepType
@@ -35,7 +35,7 @@ class WaitStep(BaseStep):
         duration = self.duration
 
         async def wait(input_value: Any) -> Any:
-            await asyncio.sleep(duration)
+            await sleep(duration)
             return input_value
 
         return wait
