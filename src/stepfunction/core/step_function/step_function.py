@@ -131,7 +131,7 @@ class StepFunction:
         func: Union[Callable[[Any], Any], Dict[str, Callable[[Any], Any]], BaseStep],
         next_step: Optional[str] = None,
         on_failure: Optional[str] = None,
-        branch: Optional[Dict[Any, str]] = None,
+        branch: Optional[Union[Dict[Any, str], Callable[[Any], str]]] = None,
         parallel: bool = False,
         stop_on_failure: bool = False,
     ):
