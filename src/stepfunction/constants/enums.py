@@ -6,3 +6,8 @@ class StepFunctionStatus(Enum):
     RUNNING = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+
+
+class StepType(Enum):
+    INBUILT = "INBUILT"
+    EXTERNAL = "EXTERNAL"
