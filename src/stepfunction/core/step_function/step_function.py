@@ -13,6 +13,7 @@ from stepfunction.exceptions.step_errors import (
     ParallelStepExecutionError,
     StepExecutionError,
 )
+from stepfunction.steps.base import BaseStep
 from stepfunction.types.step_types import StepParams
 from stepfunction.utils.logger import setup_logger
 
@@ -127,7 +128,7 @@ class StepFunction:
     def add_step(
         self,
         name: str,
-        func: Union[Callable[[Any], Any], Dict[str, Callable[[Any], Any]]],
+        func: Union[Callable[[Any], Any], Dict[str, Callable[[Any], Any]], BaseStep],
         next_step: Optional[str] = None,
         on_failure: Optional[str] = None,
         branch: Optional[Dict[Any, str]] = None,
@@ -139,6 +140,11 @@ class StepFunction:
         if name in self.__steps:
             raise ValueError(f"Step '{name}' already exists in steps")
 
+        step_type = None
+        if isinstance(func, BaseStep):
+            step_type = func.step_type
+            func = func.build()
+
         self.__steps[name] = {
             "func": func,
             "next_step": next_step,
@@ -146,6 +152,7 @@ class StepFunction:
             "branch": branch,
             "parallel": parallel,
             "stop_on_failure": stop_on_failure,
+            "step_type": step_type,
         }
 
     def add_sub_step_function(
