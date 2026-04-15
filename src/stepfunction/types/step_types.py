@@ -3,8 +3,8 @@ from typing import Any, Callable, Dict, Optional, TypedDict, Union
 from stepfunction.constants.enums import StepType
 
 
-class StepParams(TypedDict, total=False):
-    func: Callable[[Any], Any]
+class StepParams(TypedDict):
+    func: Union[Callable[[Any], Any], Dict[str, Callable[[Any], Any]]]
     next_step: Optional[str]
     on_failure: Optional[str]
     branch: Optional[Union[Dict[Any, str], Callable[[Any], Optional[str]]]]

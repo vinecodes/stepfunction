@@ -9,6 +9,6 @@ class StepExecutionError(Exception):
 class ParallelStepExecutionError(Exception):
     """Error raised when a parallel step fails."""
 
-    def __init__(self, exc: Exception):
+    def __init__(self, exc: list[tuple[str, Exception]]):
         self.message = f"Parallel step generated an exception: {exc}"
         super().__init__(self.message)
