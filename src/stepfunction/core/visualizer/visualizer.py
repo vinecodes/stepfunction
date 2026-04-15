@@ -4,6 +4,7 @@ Author: Vineeth Penugonda
 """
 
 from os import getcwd
+from typing import Dict, Optional
 
 from graphviz import Digraph
 
@@ -29,7 +30,7 @@ from stepfunction.types.visualizer_types import RenderStepFunctionParams
 class Visualizer:
     """This class is responsible for visualizing the graph model."""
 
-    def __init__(self, graph_name: str, steps: StepParams = None):
+    def __init__(self, graph_name: str, steps: Optional[Dict[str, StepParams]] = None):
         """Initializes the visualizer."""
 
         self.graph_name = graph_name
@@ -47,10 +48,7 @@ class Visualizer:
             raise ValueError("No steps found to visualize.")
 
         for step_name, step_info in self.__steps.items():
-            if (
-                "is_sub_step_function" in step_info
-                and step_info["is_sub_step_function"]
-            ):
+            if step_info["is_sub_step_function"]:
                 self.__dot.node(
                     step_name,
                     step_name,
@@ -100,7 +98,7 @@ class Visualizer:
                         if step_info["next_step"]:
                             self.__dot.edge(parallel_step_name, step_info["next_step"])
 
-            if step_info.get("branch"):
+            if isinstance(step_info["branch"], dict):
                 for result, next_step in step_info["branch"].items():
                     self.__dot.edge(step_name, next_step, label=f"Branch: {result}")
 
