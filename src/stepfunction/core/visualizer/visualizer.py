@@ -64,7 +64,8 @@ def _extract_callable_branch_edges(
     branch_func: Callable[[Any], Optional[str]], known_steps: Set[str]
 ) -> List[Tuple[str, Optional[str]]]:
     """Statically inspects a branch callable's source for ``return "<step_name>"``
-    statements, pairing each target with the nearest enclosing ``if`` condition.
+    statements, pairing each target with the nearest enclosing ``if``/``else``
+    condition.
 
     Router callables in this library are plain functions that inspect the prior
     step's result and return the name of the next step. Since the callable isn't
@@ -95,20 +96,33 @@ def _extract_callable_branch_edges(
     if func_node is None:
         return []
 
-    # Map each node in the function body to its nearest enclosing `if`, so a
-    # `return "Step"` can be paired with the condition that guards it.
-    parent_if: Dict[AST, Optional[If]] = {}
+    # Map each node in the function body to the nearest enclosing `if` *and*
+    # which side of it the node is on (the `test` body vs. the `else`/`elif`
+    # body) - a plain `if/else` shares one `If` node for both branches, so
+    # without tracking the side, a return in the `else` would be mislabeled
+    # with the same (un-negated) condition as the `if` branch.
+    branch_context: Dict[AST, Optional[Tuple[If, bool]]] = {}
 
-    def _walk(node: AST, current_if: Optional[If]) -> None:
+    def _walk(node: AST, current_branch: Optional[Tuple[If, bool]]) -> None:
+        if isinstance(node, If):
+            branch_context[node] = current_branch
+
+            for child in node.body:
+                branch_context[child] = (node, True)
+                _walk(child, (node, True))
+
+            for child in node.orelse:
+                branch_context[child] = (node, False)
+                _walk(child, (node, False))
+
+            return
+
         for child in iter_child_nodes(node):
-            if isinstance(child, If):
-                parent_if[child] = current_if
-                _walk(child, child)
-            elif isinstance(child, (FunctionDef, AsyncFunctionDef, Lambda)):
+            if isinstance(child, (FunctionDef, AsyncFunctionDef, Lambda)):
                 continue
-            else:
-                parent_if[child] = current_if
-                _walk(child, current_if)
+
+            branch_context[child] = current_branch
+            _walk(child, current_branch)
 
     _walk(func_node, None)
 
@@ -127,11 +141,13 @@ def _extract_callable_branch_edges(
         if target not in known_steps:
             continue
 
-        enclosing_if = parent_if.get(node)
+        context = branch_context.get(node)
         label = None
-        if enclosing_if is not None:
+        if context is not None:
+            enclosing_if, is_true_branch = context
             try:
-                label = unparse(enclosing_if.test)
+                condition = unparse(enclosing_if.test)
+                label = condition if is_true_branch else f"not ({condition})"
             except Exception:
                 label = None
 

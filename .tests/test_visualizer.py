@@ -32,6 +32,13 @@ def router_to_unknown_step(result):
     return "ExternalFlow"
 
 
+def explicit_if_else_router(value):
+    if value == "XYZ":
+        return "InternalFlow"
+    else:
+        return "ExternalFlow"
+
+
 def build_visualizer(sf: StepFunction) -> Visualizer:
     return Visualizer(sf.name, sf.steps)
 
@@ -217,6 +224,23 @@ def test_callable_branch_ignores_targets_not_in_known_steps():
 
     assert "DoesNotExist" not in output
     assert 'StepA -->|"Branch: else"| ExternalFlow' in output
+
+
+def test_callable_branch_negates_condition_for_explicit_else():
+    # An explicit if/else shares one ast.If node for both branches - without
+    # tracking which side a return is on, both would get the same (un-negated)
+    # condition label.
+    sf = StepFunction("Demo")
+    sf.add_step("StepA", noop, branch=explicit_if_else_router)
+    sf.add_step("InternalFlow", noop)
+    sf.add_step("ExternalFlow", noop)
+
+    visualizer = build_visualizer(sf)
+    visualizer.visualize_step_function()
+    output = visualizer.render_step_function_to_string()
+
+    assert "StepA -->|\"Branch: value == 'XYZ'\"| InternalFlow" in output
+    assert "StepA -->|\"Branch: not (value == 'XYZ')\"| ExternalFlow" in output
 
 
 def test_callable_branch_without_source_yields_no_edges():
