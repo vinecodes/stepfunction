@@ -5,7 +5,7 @@ Author: Vineeth Penugonda
 
 from asyncio import gather, get_running_loop
 from inspect import iscoroutinefunction
-from typing import Any, Callable, Dict, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from stepfunction.constants.enums import StepFunctionStatus
 from stepfunction.exceptions.step_errors import (
@@ -165,6 +165,7 @@ class StepFunction:
             "stop_on_failure": stop_on_failure,
             "is_sub_step_function": False,
             "step_type": step_type,
+            "sub_step_function": None,
         }
 
     def add_sub_step_function(
@@ -197,6 +198,7 @@ class StepFunction:
             "stop_on_failure": False,
             "is_sub_step_function": True,
             "step_type": None,
+            "sub_step_function": sub_step_function,
         }
 
     def set_start_step(self, name: str):
@@ -208,23 +210,45 @@ class StepFunction:
 
     def validate(self):
         """Validate the workflow configuration before execution."""
+        self._validate(path=[self.__name])
+
+    def _validate(self, path: List[str]):
+        """Validate this step function, recursing into sub-step functions.
+
+        ``path`` tracks the chain of step-function names from the outermost
+        workflow down to this one, so a failure several sub-step functions
+        deep is reported as a single readable breadcrumb (e.g.
+        "FLOW -> SUB_FLOW_3 -> SUB_FLOW_4") instead of a wall of nested
+        "invalid sub-step function" messages.
+        """
+
+        def _fail(message: str) -> None:
+            location = " -> ".join(path)
+            raise ValueError(f"[{location}] {message}")
 
         if self.__current_step is None:
-            raise ValueError(
+            _fail(
                 "No start step set. Call set_start_step() before executing the workflow."
             )
 
         for step_name, step in self.__steps.items():
             if step["next_step"] is not None and step["next_step"] not in self.__steps:
-                raise ValueError(
+                _fail(
                     f"Step '{step_name}' has unknown next_step '{step['next_step']}'."
                 )
             if (
                 step["on_failure"] is not None
                 and step["on_failure"] not in self.__steps
             ):
-                raise ValueError(
+                _fail(
                     f"Step '{step_name}' has unknown on_failure '{step['on_failure']}'."
+                )
+            if step["is_sub_step_function"]:
+                sub_step_function = cast("StepFunction", step["sub_step_function"])
+                sub_step_function._validate(
+                    path=path + [f"{step_name} ({sub_step_function.name})"]
+                    if step_name != sub_step_function.name
+                    else path + [step_name]
                 )
 
     async def execute(self, initial_input: Any = None):
