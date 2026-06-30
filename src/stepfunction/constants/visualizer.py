@@ -46,3 +46,8 @@ DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_CLASS_STYLE = (
     "fill:#f5f5f5,stroke:#333,stroke-dasharray: 5 5"
 )
 """str: The Mermaid classDef style applied to sub-step function nodes."""
+
+# Node ID sanitization
+
+VISUALIZER_INVALID_NODE_ID_CHARS = r"[^0-9A-Za-z_]"
+"""str: Regex matching characters not allowed in a Mermaid node ID; matches are replaced with "_"."""

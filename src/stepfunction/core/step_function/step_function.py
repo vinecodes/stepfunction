@@ -5,7 +5,7 @@ Author: Vineeth Penugonda
 
 from asyncio import gather, get_running_loop
 from inspect import iscoroutinefunction
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 
 from stepfunction.constants.enums import StepFunctionStatus
 from stepfunction.exceptions.step_errors import (
@@ -15,6 +15,9 @@ from stepfunction.exceptions.step_errors import (
 from stepfunction.steps.base import BaseStep
 from stepfunction.types.step_types import StepParams
 from stepfunction.utils.logger import setup_logger
+
+if TYPE_CHECKING:
+    from stepfunction.registry.step_registry import StepRegistry
 
 
 class StepFunction:
@@ -65,6 +68,14 @@ class StepFunction:
 
         visualize_to_string():
             Return a string representation of the workflow for visualization.
+
+        to_dict(step_registry=None) / to_json(indent=2, step_registry=None):
+            Export the workflow as a JSON-able dict / JSON string, resolving step and
+            branch functions to their registered name via stepfunction.registry.step_registry.
+
+        from_dict(data, step_registry=None) / from_json(json_str, step_registry=None):
+            Classmethods that reconstruct a StepFunction from a dict/JSON string
+            produced by to_dict()/to_json(), resolving function names via the registry.
 
     Protected Methods:
         _execute_step(func, input_value):
@@ -430,6 +441,70 @@ class StepFunction:
 
         return visualizer.render_step_function_to_string()
 
+    def to_dict(self, step_registry: Optional["StepRegistry"] = None) -> Dict[str, Any]:
+        """Export this workflow as a JSON-able dict.
+
+        Function references (step funcs, parallel-step funcs, and branch
+        callables) are encoded as their registered string name — see
+        ``stepfunction.registry.step_registry``. Nested sub-step-functions are
+        encoded recursively.
+
+        Call this before execute(): if the workflow has already run,
+        "start_step" reflects wherever the execution cursor ended up
+        (often None after a completed run), not the original start step.
+
+        Raises:
+            UnserializableStepError: If any step was built from a BaseStep
+                instance (RetryStep, TimeoutStep, WaitStep, or a custom
+                BaseStep subclass) — not yet supported.
+            UnregisteredFunctionError: If a step or branch function used in
+                this workflow has no registered name in ``step_registry``.
+        """
+        from stepfunction.core.serializer import encode_step_function
+
+        return encode_step_function(self, step_registry)
+
+    def to_json(
+        self, indent: Optional[int] = 2, step_registry: Optional["StepRegistry"] = None
+    ) -> str:
+        """Export this workflow as a JSON string. See to_dict() for details
+        and caveats."""
+        from json import dumps
+
+        return dumps(self.to_dict(step_registry), indent=indent)
+
+    @classmethod
+    def from_dict(
+        cls, data: Dict[str, Any], step_registry: Optional["StepRegistry"] = None
+    ) -> "StepFunction":
+        """Reconstruct a StepFunction from a dict produced by to_dict().
+
+        Function name references in ``data`` are resolved against
+        ``step_registry`` (defaults to the package's default registry,
+        ``stepfunction.registry.step_registry.registry``, if not given). Validates the
+        reconstructed workflow before returning, so a malformed spec fails
+        fast with a readable breadcrumb error rather than only failing
+        later at execute() time.
+
+        Raises:
+            UnregisteredFunctionError: If a referenced function name isn't
+                registered.
+            ValueError: If the reconstructed workflow fails validate().
+        """
+        from stepfunction.core.serializer import decode_step_function
+
+        return decode_step_function(data, step_registry)
+
+    @classmethod
+    def from_json(
+        cls, json_str: str, step_registry: Optional["StepRegistry"] = None
+    ) -> "StepFunction":
+        """Reconstruct a StepFunction from a JSON string produced by to_json().
+        See from_dict() for details."""
+        from json import loads
+
+        return cls.from_dict(loads(json_str), step_registry)
+
     @property
     def name(self):
         """Returns the name of the step function."""
@@ -454,6 +529,12 @@ class StepFunction:
     def status(self):
         """Returns the status of the step function."""
         return self.__status
+
+    @property
+    def current_step(self):
+        """Returns the step set by set_start_step(), advanced by execute()
+        as the workflow progresses."""
+        return self.__current_step
 
     def __str__(self):
         return f"StepFunction(name={self.__name}, NoOfSteps={len(self.__steps)}, CurrentStep={self.__current_step}, Status={self.__status})"
