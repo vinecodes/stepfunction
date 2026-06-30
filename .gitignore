@@ -128,6 +128,5 @@ cython_debug/
 **/thumbs.db
 
 # Scratch test scripts and rendered diagrams (not part of the test suite)
-.tests/test.py
-.tests/test_step_function.py
+.tests/*
 workflow_renders/
