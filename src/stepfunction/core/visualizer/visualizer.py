@@ -3,32 +3,147 @@
 Author: Vineeth Penugonda
 """
 
-from os import getcwd
-from typing import Dict, Optional
-
-from graphviz import Digraph
+from ast import (
+    AST,
+    AsyncFunctionDef,
+    Constant,
+    FunctionDef,
+    If,
+    Lambda,
+    Return,
+    iter_child_nodes,
+    parse,
+    unparse,
+    walk,
+)
+from inspect import getsource
+from os import getcwd, makedirs
+from textwrap import dedent
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, cast
 
 from stepfunction.constants.visualizer import (
+    DEFAULT_VISUALIZER_BRANCH_DEFAULT_LABEL,
+    DEFAULT_VISUALIZER_BRANCH_EDGE_LABEL_PREFIX,
+    DEFAULT_VISUALIZER_DIRECTION,
     DEFAULT_VISUALIZER_EXTENSION,
-    DEFAULT_VISUALIZER_FAILURE_EDGE_COLOR,
     DEFAULT_VISUALIZER_FAILURE_EDGE_LABEL,
     DEFAULT_VISUALIZER_FOLDER,
-    DEFAULT_VISUALIZER_FORMAT,
-    DEFAULT_VISUALIZER_PARALLEL_STEP_EDGE_STYLE,
-    DEFAULT_VISUALIZER_RENDERER,
+    DEFAULT_VISUALIZER_MAX_BRANCH_LABEL_LENGTH,
     DEFAULT_VISUALIZER_STOP_ON_FAILURE_EDGE_COLOR,
     DEFAULT_VISUALIZER_STOP_ON_FAILURE_EDGE_LABEL,
     DEFAULT_VISUALIZER_STRING_ENCODING,
-    DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_NODE_SHAPE,
-    DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_NODE_STYLE,
+    DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_CLASS,
+    DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_CLASS_STYLE,
     DEFAULT_VISUALIZER_SUCCESS_EDGE_LABEL,
 )
 from stepfunction.types.step_types import StepParams
-from stepfunction.types.visualizer_types import RenderStepFunctionParams
+
+
+def _quote(label: str) -> str:
+    """Escape and quote a string for use as a Mermaid edge label."""
+
+    escaped = label.replace('"', "'").replace("|", "/")
+    return f'"{escaped}"'
+
+
+def _truncate(
+    label: str, max_length: int = DEFAULT_VISUALIZER_MAX_BRANCH_LABEL_LENGTH
+) -> str:
+    """Truncate a label to a maximum length, preserving readability."""
+
+    if len(label) <= max_length:
+        return label
+
+    return f"{label[: max_length - 3]}..."
+
+
+def _extract_callable_branch_edges(
+    branch_func: Callable[[Any], Optional[str]], known_steps: Set[str]
+) -> List[Tuple[str, Optional[str]]]:
+    """Statically inspects a branch callable's source for ``return "<step_name>"``
+    statements, pairing each target with the nearest enclosing ``if`` condition.
+
+    Router callables in this library are plain functions that inspect the prior
+    step's result and return the name of the next step. Since the callable isn't
+    executed at visualization time, the runtime outcome can't be known - but most
+    routers are simple if/elif/return chains, so a light AST scan recovers a
+    faithful approximation of the possible branches without executing the
+    callable. Falls back to no edges if the source isn't available or isn't a
+    recognizable if/return shape, rather than guessing.
+
+    Returns a list of ``(target_step, condition_label)`` tuples, where
+    ``condition_label`` is ``None`` for an unconditional/fallback return.
+    """
+
+    try:
+        source = dedent(getsource(branch_func))
+        tree = parse(source)
+    except (OSError, TypeError, SyntaxError):
+        return []
+
+    func_node = next(
+        (
+            node
+            for node in walk(tree)
+            if isinstance(node, (FunctionDef, AsyncFunctionDef))
+        ),
+        None,
+    )
+    if func_node is None:
+        return []
+
+    # Map each node in the function body to its nearest enclosing `if`, so a
+    # `return "Step"` can be paired with the condition that guards it.
+    parent_if: Dict[AST, Optional[If]] = {}
+
+    def _walk(node: AST, current_if: Optional[If]) -> None:
+        for child in iter_child_nodes(node):
+            if isinstance(child, If):
+                parent_if[child] = current_if
+                _walk(child, child)
+            elif isinstance(child, (FunctionDef, AsyncFunctionDef, Lambda)):
+                continue
+            else:
+                parent_if[child] = current_if
+                _walk(child, current_if)
+
+    _walk(func_node, None)
+
+    edges: List[Tuple[str, Optional[str]]] = []
+    seen: Set[Tuple[str, Optional[str]]] = set()
+
+    for node in walk(func_node):
+        if not isinstance(node, Return) or node.value is None:
+            continue
+
+        value = node.value
+        if not (isinstance(value, Constant) and isinstance(value.value, str)):
+            continue
+
+        target = value.value
+        if target not in known_steps:
+            continue
+
+        enclosing_if = parent_if.get(node)
+        label = None
+        if enclosing_if is not None:
+            try:
+                label = unparse(enclosing_if.test)
+            except Exception:
+                label = None
+
+        key = (target, label)
+        if key in seen:
+            continue
+
+        seen.add(key)
+        edges.append((target, label))
+
+    return edges
 
 
 class Visualizer:
-    """This class is responsible for visualizing the graph model."""
+    """This class is responsible for visualizing the graph model as a Mermaid flowchart."""
 
     def __init__(self, graph_name: str, steps: Optional[Dict[str, StepParams]] = None):
         """Initializes the visualizer."""
@@ -39,101 +154,156 @@ class Visualizer:
         self.__output_file_name = None
         self.__output_file_path = None
 
-        self.__dot = Digraph(comment=self.graph_name)
+        self.__node_lines: List[str] = []
+        self.__edge_lines: List[str] = []
+        self.__link_styles: List[str] = []
+        self.__sub_step_function_nodes: Set[str] = set()
 
     def visualize_step_function(self):
-        """Visualizes the graph model."""
+        """Builds the Mermaid flowchart definition from the step function's steps."""
 
         if not self.__steps:
             raise ValueError("No steps found to visualize.")
 
+        known_steps = set(self.__steps.keys())
+
         for step_name, step_info in self.__steps.items():
-            if step_info["is_sub_step_function"]:
-                self.__dot.node(
-                    step_name,
-                    step_name,
-                    shape=DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_NODE_SHAPE,
-                    style=DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_NODE_STYLE,
-                )
-            else:
-                self.__dot.node(step_name, step_name)
+            self.__add_node(step_name, step_info)
 
             if step_info["next_step"]:
-                self.__dot.edge(
+                self.__add_edge(
                     step_name,
                     step_info["next_step"],
-                    label=DEFAULT_VISUALIZER_SUCCESS_EDGE_LABEL,
+                    DEFAULT_VISUALIZER_SUCCESS_EDGE_LABEL,
                 )
 
             if step_info["on_failure"]:
-                failure_edge_label = DEFAULT_VISUALIZER_FAILURE_EDGE_LABEL
-                failure_edge_color = DEFAULT_VISUALIZER_FAILURE_EDGE_COLOR
-
                 if step_info.get("stop_on_failure"):
-                    failure_edge_label = DEFAULT_VISUALIZER_STOP_ON_FAILURE_EDGE_LABEL
-                    failure_edge_color = DEFAULT_VISUALIZER_STOP_ON_FAILURE_EDGE_COLOR
-
-                self.__dot.edge(
-                    step_name,
-                    step_info["on_failure"],
-                    label=failure_edge_label,
-                    color=failure_edge_color,
-                )
+                    self.__add_edge(
+                        step_name,
+                        step_info["on_failure"],
+                        DEFAULT_VISUALIZER_STOP_ON_FAILURE_EDGE_LABEL,
+                        dashed=True,
+                        color=DEFAULT_VISUALIZER_STOP_ON_FAILURE_EDGE_COLOR,
+                    )
+                else:
+                    self.__add_edge(
+                        step_name,
+                        step_info["on_failure"],
+                        DEFAULT_VISUALIZER_FAILURE_EDGE_LABEL,
+                        dashed=True,
+                    )
 
             if step_info["parallel"]:
                 # func is a dictionary for parallel steps
-                parallel_function_names = step_info["func"]
+                parallel_function_names = cast(
+                    Dict[str, Callable[[Any], Any]], step_info["func"]
+                )
 
-                with self.__dot.subgraph() as s:
-                    s.attr(rank="same")
+                for parallel_step_name in parallel_function_names:
+                    self.__add_node(parallel_step_name, {})
+                    self.__add_edge(step_name, parallel_step_name, dashed=True)
 
-                    for parallel_step_name, func in parallel_function_names.items():
-                        self.__dot.node(parallel_step_name, parallel_step_name)
-                        self.__dot.edge(
-                            step_name,
-                            parallel_step_name,
-                            style=DEFAULT_VISUALIZER_PARALLEL_STEP_EDGE_STYLE,
-                        )
+                    if step_info["next_step"]:
+                        self.__add_edge(parallel_step_name, step_info["next_step"])
 
-                        if step_info["next_step"]:
-                            self.__dot.edge(parallel_step_name, step_info["next_step"])
+            branch = step_info["branch"]
+            if isinstance(branch, dict):
+                for result, next_step in branch.items():
+                    self.__add_edge(
+                        step_name,
+                        next_step,
+                        f"{DEFAULT_VISUALIZER_BRANCH_EDGE_LABEL_PREFIX}: {result}",
+                    )
+            elif callable(branch):
+                for target, condition in _extract_callable_branch_edges(
+                    branch, known_steps
+                ):
+                    label_suffix = condition or DEFAULT_VISUALIZER_BRANCH_DEFAULT_LABEL
+                    label = (
+                        f"{DEFAULT_VISUALIZER_BRANCH_EDGE_LABEL_PREFIX}: "
+                        f"{_truncate(label_suffix)}"
+                    )
+                    self.__add_edge(step_name, target, label)
 
-            if isinstance(step_info["branch"], dict):
-                for result, next_step in step_info["branch"].items():
-                    self.__dot.edge(step_name, next_step, label=f"Branch: {result}")
+    def __add_node(self, step_name: str, step_info: Mapping[str, Any]) -> None:
+        if step_info.get("is_sub_step_function"):
+            self.__node_lines.append(f'{step_name}(["{step_name}"])')
+            self.__sub_step_function_nodes.add(step_name)
+        else:
+            self.__node_lines.append(f'{step_name}["{step_name}"]')
 
-    def render_step_function(self, **kwargs: RenderStepFunctionParams):
-        """Renders the graph model."""
+    def __add_edge(
+        self,
+        source: str,
+        target: str,
+        label: Optional[str] = None,
+        dashed: bool = False,
+        color: Optional[str] = None,
+    ) -> None:
+        arrow = "-.->" if dashed else "-->"
+
+        if label:
+            self.__edge_lines.append(f"{source} {arrow}|{_quote(label)}| {target}")
+        else:
+            self.__edge_lines.append(f"{source} {arrow} {target}")
+
+        if color:
+            edge_index = len(self.__edge_lines) - 1
+            self.__link_styles.append(f"linkStyle {edge_index} stroke:{color}")
+
+    def __build_mermaid(self, direction: str) -> str:
+        lines = [f"flowchart {direction}"]
+
+        lines.extend(f"    {line}" for line in self.__node_lines)
+        lines.extend(f"    {line}" for line in self.__edge_lines)
+        lines.extend(f"    {line}" for line in self.__link_styles)
+
+        if self.__sub_step_function_nodes:
+            lines.append(
+                f"    classDef {DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_CLASS} "
+                f"{DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_CLASS_STYLE}"
+            )
+            node_list = ",".join(sorted(self.__sub_step_function_nodes))
+            lines.append(
+                f"    class {node_list} {DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_CLASS}"
+            )
+
+        return "\n".join(lines) + "\n"
+
+    def render_step_function(
+        self,
+        *,
+        file_path: Optional[str] = None,
+        file_name: Optional[str] = None,
+        direction: str = DEFAULT_VISUALIZER_DIRECTION,
+    ) -> None:
+        """Writes the Mermaid flowchart definition to a .mmd file."""
+
         current_dir = getcwd()
 
-        format = kwargs.get("format", DEFAULT_VISUALIZER_FORMAT)
-        renderer = kwargs.get("renderer", DEFAULT_VISUALIZER_RENDERER)
-
-        file_path = kwargs.get(
-            "file_path", f"{current_dir}/{DEFAULT_VISUALIZER_FOLDER}"
-        )
-        file_name = kwargs.get(
-            "file_name", f"{self.graph_name}.{DEFAULT_VISUALIZER_EXTENSION}"
+        resolved_file_path = file_path or f"{current_dir}/{DEFAULT_VISUALIZER_FOLDER}"
+        resolved_file_name = (
+            file_name or f"{self.graph_name}.{DEFAULT_VISUALIZER_EXTENSION}"
         )
 
-        self.__output_file_path = file_path
-        self.__output_file_name = file_name
+        self.__output_file_path = resolved_file_path
+        self.__output_file_name = resolved_file_name
 
-        self.__dot.render(
-            filename=f"{self.__output_file_path}/{self.__output_file_name}",
-            format=format,
-            renderer=renderer,
-        )
+        makedirs(resolved_file_path, exist_ok=True)
 
-    def render_step_function_to_string(self, **kwargs: RenderStepFunctionParams):
-        """Renders the graph model as a string."""
+        output_file = f"{resolved_file_path}/{resolved_file_name}"
+        with open(
+            output_file, "w", encoding=DEFAULT_VISUALIZER_STRING_ENCODING
+        ) as handle:
+            handle.write(self.__build_mermaid(direction))
 
-        format = kwargs.get("format", DEFAULT_VISUALIZER_FORMAT)
-        renderer = kwargs.get("renderer", DEFAULT_VISUALIZER_RENDERER)
+    def render_step_function_to_string(
+        self, *, direction: str = DEFAULT_VISUALIZER_DIRECTION
+    ) -> str:
+        """Renders the Mermaid flowchart definition as a string."""
 
-        return self.__dot.pipe(format=format, renderer=renderer).decode(
-            DEFAULT_VISUALIZER_STRING_ENCODING
-        )
+        return self.__build_mermaid(direction)
 
     @property
     def output_file_name(self):
