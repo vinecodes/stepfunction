@@ -12,7 +12,7 @@
 - **Error Handling**: Define failure paths and handle exceptions gracefully.
 - **Branching Logic**: Direct workflows based on conditions.
 - **Sub-Step Functions**: Modularize workflows by embedding sub-step functions.
-- **Visualization**: Integrated support for visualizing the workflow graph.
+- **Visualization**: Integrated support for visualizing the workflow graph as a Mermaid flowchart.
 
 ## Installation
 
@@ -28,11 +28,7 @@ For more detailed usage examples and advanced use cases, please read the [blog p
 
 ## Dependencies
 
-The StepFunction package requires the following dependencies:
-
-- `graphviz == 0.20.3`
-
-These will be automatically installed when you install the package via pip.
+The StepFunction package has no required runtime dependencies. Workflow visualization renders directly to [Mermaid](https://mermaid.js.org/) flowchart syntax (`.mmd`), which can be previewed in VS Code, GitHub/Bitbucket markdown, or https://mermaid.live without any additional tooling.
 
 ## Contributing
 

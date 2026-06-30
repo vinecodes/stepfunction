@@ -126,3 +126,7 @@ cython_debug/
 # Ignore system-specific files
 **/.DS_Store
 **/thumbs.db
+
+# Scratch test scripts and rendered diagrams (not part of the test suite)
+.tests/*
+workflow_renders/
