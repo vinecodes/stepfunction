@@ -18,6 +18,7 @@ from ast import (
 )
 from inspect import getsource
 from os import getcwd, makedirs
+from re import sub as re_sub
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, cast
 
@@ -37,6 +38,8 @@ from stepfunction.constants.visualizer import (
     DEFAULT_VISUALIZER_SUCCESS_EDGE_LABEL,
 )
 from stepfunction.types.step_types import StepParams
+
+_INVALID_NODE_ID_CHARS = r"[^0-9A-Za-z_]"
 
 
 def _quote(label: str) -> str:
@@ -158,6 +161,7 @@ class Visualizer:
         self.__edge_lines: List[str] = []
         self.__link_styles: List[str] = []
         self.__sub_step_function_nodes: Set[str] = set()
+        self.__node_ids: Dict[str, str] = {}
 
     def visualize_step_function(self):
         """Builds the Mermaid flowchart definition from the step function's steps."""
@@ -226,12 +230,43 @@ class Visualizer:
                     )
                     self.__add_edge(step_name, target, label)
 
+    def __node_id(self, step_name: str) -> str:
+        """Maps a step name to a Mermaid-safe node ID.
+
+        Step names are free text and may contain spaces or other characters
+        that Mermaid doesn't allow in a bare node ID (only the bracketed label
+        accepts arbitrary text). The original name is preserved as the node's
+        label; this only affects the identifier used to reference the node in
+        edges. Cached so the same step name always resolves to the same ID,
+        and disambiguated on collision (e.g. "First Step" and "First_Step"
+        would otherwise both sanitize to "First_Step").
+        """
+
+        if step_name in self.__node_ids:
+            return self.__node_ids[step_name]
+
+        sanitized = re_sub(_INVALID_NODE_ID_CHARS, "_", step_name) or "step"
+        if sanitized[0].isdigit():
+            sanitized = f"_{sanitized}"
+
+        existing_ids = set(self.__node_ids.values())
+        candidate = sanitized
+        suffix = 2
+        while candidate in existing_ids:
+            candidate = f"{sanitized}_{suffix}"
+            suffix += 1
+
+        self.__node_ids[step_name] = candidate
+        return candidate
+
     def __add_node(self, step_name: str, step_info: Mapping[str, Any]) -> None:
+        node_id = self.__node_id(step_name)
+
         if step_info.get("is_sub_step_function"):
-            self.__node_lines.append(f'{step_name}(["{step_name}"])')
-            self.__sub_step_function_nodes.add(step_name)
+            self.__node_lines.append(f"{node_id}([{_quote(step_name)}])")
+            self.__sub_step_function_nodes.add(node_id)
         else:
-            self.__node_lines.append(f'{step_name}["{step_name}"]')
+            self.__node_lines.append(f"{node_id}[{_quote(step_name)}]")
 
     def __add_edge(
         self,
@@ -242,11 +277,15 @@ class Visualizer:
         color: Optional[str] = None,
     ) -> None:
         arrow = "-.->" if dashed else "-->"
+        source_id = self.__node_id(source)
+        target_id = self.__node_id(target)
 
         if label:
-            self.__edge_lines.append(f"{source} {arrow}|{_quote(label)}| {target}")
+            self.__edge_lines.append(
+                f"{source_id} {arrow}|{_quote(label)}| {target_id}"
+            )
         else:
-            self.__edge_lines.append(f"{source} {arrow} {target}")
+            self.__edge_lines.append(f"{source_id} {arrow} {target_id}")
 
         if color:
             edge_index = len(self.__edge_lines) - 1

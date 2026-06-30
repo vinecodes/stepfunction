@@ -63,6 +63,35 @@ def test_plain_step_node_and_success_edge():
     assert 'StepA -->|"Success"| StepB' in output
 
 
+def test_step_names_with_spaces_get_sanitized_node_ids():
+    sf = StepFunction("Demo")
+    sf.add_step("First Step", noop, next_step="Second Step")
+    sf.add_step("Second Step", noop)
+
+    visualizer = build_visualizer(sf)
+    visualizer.visualize_step_function()
+    output = visualizer.render_step_function_to_string()
+
+    assert 'First_Step["First Step"]' in output
+    assert 'Second_Step["Second Step"]' in output
+    assert 'First_Step -->|"Success"| Second_Step' in output
+    assert "First Step[" not in output
+
+
+def test_node_id_collisions_are_disambiguated():
+    sf = StepFunction("Demo")
+    sf.add_step("First Step", noop, next_step="First_Step")
+    sf.add_step("First_Step", noop)
+
+    visualizer = build_visualizer(sf)
+    visualizer.visualize_step_function()
+    output = visualizer.render_step_function_to_string()
+
+    assert 'First_Step["First Step"]' in output
+    assert 'First_Step_2["First_Step"]' in output
+    assert 'First_Step -->|"Success"| First_Step_2' in output
+
+
 def test_on_failure_edge_is_dashed():
     sf = StepFunction("Demo")
     sf.add_step("StepA", noop, on_failure="Fail")
