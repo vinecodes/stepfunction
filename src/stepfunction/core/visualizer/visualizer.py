@@ -36,10 +36,9 @@ from stepfunction.constants.visualizer import (
     DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_CLASS,
     DEFAULT_VISUALIZER_SUB_STEP_FUNCTION_CLASS_STYLE,
     DEFAULT_VISUALIZER_SUCCESS_EDGE_LABEL,
+    VISUALIZER_INVALID_NODE_ID_CHARS,
 )
 from stepfunction.types.step_types import StepParams
-
-_INVALID_NODE_ID_CHARS = r"[^0-9A-Za-z_]"
 
 
 def _quote(label: str) -> str:
@@ -261,7 +260,7 @@ class Visualizer:
         if step_name in self.__node_ids:
             return self.__node_ids[step_name]
 
-        sanitized = re_sub(_INVALID_NODE_ID_CHARS, "_", step_name) or "step"
+        sanitized = re_sub(VISUALIZER_INVALID_NODE_ID_CHARS, "_", step_name) or "step"
         if sanitized[0].isdigit():
             sanitized = f"_{sanitized}"
 

@@ -26,7 +26,7 @@ ignore = ["E501"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["stepfunction.*"]
+include = ["stepfunction", "stepfunction.*"]
 
 [project.urls]
 Homepage = "https://github.com/vinecodes/stepfunction"
