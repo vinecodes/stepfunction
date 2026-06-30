@@ -254,3 +254,43 @@ def test_render_step_function_writes_mmd_file(tmp_path):
     assert content.startswith("flowchart TD")
     assert visualizer.output_file_name == "demo.mmd"
     assert visualizer.output_file_path == str(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# StepFunction.visualize() / visualize_to_string() validation
+# ---------------------------------------------------------------------------
+#
+# These go through StepFunction (not Visualizer directly), since the
+# dangling-reference check lives in StepFunction.validate() and is invoked
+# from visualize()/visualize_to_string() before handing steps to the
+# Visualizer - the same check execute() already runs before running a
+# workflow.
+
+
+def test_visualize_to_string_raises_for_unknown_next_step():
+    sf = StepFunction("Demo")
+    sf.add_step("StepA", noop, next_step="Typo_Step")
+    sf.add_step("StepB", noop)
+    sf.set_start_step("StepA")
+
+    with pytest.raises(ValueError, match="unknown next_step"):
+        sf.visualize_to_string()
+
+
+def test_visualize_to_string_raises_without_start_step():
+    sf = StepFunction("Demo")
+    sf.add_step("StepA", noop)
+
+    with pytest.raises(ValueError, match="No start step set"):
+        sf.visualize_to_string()
+
+
+def test_visualize_to_string_passes_for_valid_workflow():
+    sf = StepFunction("Demo")
+    sf.add_step("StepA", noop, next_step="StepB")
+    sf.add_step("StepB", noop)
+    sf.set_start_step("StepA")
+
+    output = sf.visualize_to_string()
+
+    assert 'StepA -->|"Success"| StepB' in output

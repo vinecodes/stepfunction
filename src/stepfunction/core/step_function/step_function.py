@@ -376,6 +376,8 @@ class StepFunction:
         """Visualize the workflow."""
         from stepfunction.core.visualizer import Visualizer
 
+        self.validate()
+
         visualizer = Visualizer(self.__name, self.__steps)
 
         self.__logger.debug("Visualizing the step function")
@@ -393,6 +395,8 @@ class StepFunction:
     def visualize_to_string(self):
         """Visualize the workflow as a string."""
         from stepfunction.core.visualizer import Visualizer
+
+        self.validate()
 
         visualizer = Visualizer(self.__name, self.__steps)
 
