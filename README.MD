@@ -47,6 +47,18 @@ Events: `on_workflow_start`, `on_step_start`, `on_step_success`, `on_step_failur
 - Hooks observe; they don't steer. An exception raised by a hook is logged and ignored.
 - If the run is cancelled, the running step and the workflow are reported with the `CancelledError`, which is then re-raised.
 
+## Logging
+
+StepFunction logs under the `stepfunction` logger and leaves logging configuration to your application — it never adds handlers to, or changes the level of, the root logger or any other logger. To see its step-by-step messages:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO)
+```
+
+Without any configuration, Python prints only warnings and errors. Setting the `LOG_LEVEL` environment variable (e.g. `LOG_LEVEL=DEBUG`) sets the level of the `stepfunction` logger only.
+
 ## Installation
 
 You can install the `StepFunction` package using `pip`:
