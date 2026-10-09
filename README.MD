@@ -13,6 +13,39 @@
 - **Branching Logic**: Direct workflows based on conditions.
 - **Sub-Step Functions**: Modularize workflows by embedding sub-step functions.
 - **Visualization**: Integrated support for visualizing the workflow graph as a Mermaid flowchart.
+- **Lifecycle Hooks**: Get notified as the workflow and each step start, succeed or fail — with inputs, outputs, errors, routing and timings — to record run history, metrics or traces.
+
+## Lifecycle Hooks
+
+Subclass `StepFunctionHooks`, override the events you need (sync or async), and pass an instance to the step function:
+
+```python
+from stepfunction.core.step_function import StepFunction
+from stepfunction.hooks import StepEvent, StepFunctionHooks
+
+
+class RunRecorder(StepFunctionHooks):
+    async def on_step_start(self, event: StepEvent):
+        print(f"{event.workflow}: {event.step} started with {event.input!r}")
+
+    async def on_step_success(self, event: StepEvent):
+        print(f"{event.step} -> {event.output!r} in {event.duration:.3f}s, next: {event.next_step}")
+
+    async def on_step_failure(self, event: StepEvent):
+        print(f"{event.step} failed: {event.error!r}, next: {event.next_step}")
+
+
+sf = StepFunction("MyStepFunction", hooks=RunRecorder())
+```
+
+Events: `on_workflow_start`, `on_step_start`, `on_step_success`, `on_step_failure`, `on_workflow_end`.
+
+- `StepEvent` carries the workflow path, step name, parallel `task` name (if any), `input`, `output`, the original `error`, the resolved `next_step`, UTC `started_at` / `finished_at` and `duration` in seconds.
+- `WorkflowEvent` carries the workflow path, `status`, initial `input`, final `output`, the `error` that ended the run (if `execute()` raised) and timings.
+- Each task of a parallel step is reported as its own step event, with `task` set.
+- A sub-step function without hooks of its own reports to its parent's hooks; its events carry the nested path, e.g. `"FLOW -> SubStep (SUB_FLOW)"`.
+- Hooks observe; they don't steer. An exception raised by a hook is logged and ignored.
+- If the run is cancelled, the running step and the workflow are reported with the `CancelledError`, which is then re-raised.
 
 ## Installation
 
