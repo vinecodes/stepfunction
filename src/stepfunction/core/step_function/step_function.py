@@ -3,8 +3,9 @@
 Author: Vineeth Penugonda
 """
 
-from asyncio import gather, get_running_loop
-from inspect import iscoroutinefunction
+from asyncio import CancelledError, gather, get_running_loop
+from inspect import isawaitable, iscoroutinefunction
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 
 from stepfunction.constants.enums import StepFunctionStatus
@@ -12,9 +13,11 @@ from stepfunction.exceptions.step_errors import (
     ParallelStepExecutionError,
     StepExecutionError,
 )
+from stepfunction.hooks import StepEvent, StepFunctionHooks, WorkflowEvent
 from stepfunction.steps.base import BaseStep
 from stepfunction.types.step_types import StepParams
 from stepfunction.utils.logger import setup_logger
+from stepfunction.utils.utils import utc_now
 
 if TYPE_CHECKING:
     from stepfunction.registry.step_registry import StepRegistry
@@ -36,6 +39,7 @@ class StepFunction:
 
     Properties:
         name (str): The name of the step function.
+        hooks (Optional[StepFunctionHooks]): The lifecycle hooks set on this step function, if any.
         steps (Dict[str, StepParams]): A dictionary containing the steps of the workflow.
         last_result (Any): The result of the last step.
         context (Dict[str, Any]): Stores step names and results, including exceptions if any occur.
@@ -51,6 +55,9 @@ class StepFunction:
 
         set_start_step(name):
             Set the start step of the workflow.
+
+        set_hooks(hooks):
+            Set the lifecycle hooks (a StepFunctionHooks) notified as steps start, succeed and fail.
 
         add_sub_step_function(name, sub_step_function, next_step=None, on_failure=None):
             Add a sub-step function to be executed as a step.
@@ -119,10 +126,24 @@ class StepFunction:
 
     Status Example:
         status = step_function.status  # Will be StepFunctionStatus.INITIALIZED, StepFunctionStatus.RUNNING, StepFunctionStatus.COMPLETED, or StepFunctionStatus.FAILED.
+
+    Hooks Example:
+        class RunRecorder(StepFunctionHooks):
+            async def on_step_success(self, event):
+                print(event.step, event.duration, event.next_step)
+
+        step_function = StepFunction("MyStepFunction", hooks=RunRecorder())
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, hooks: Optional[StepFunctionHooks] = None):
         self.__name = name  # Name of the step function
+
+        self.__hooks = hooks  # Lifecycle hooks set on this step function
+
+        # Hooks and workflow path for the current run; a sub-step function
+        # without hooks of its own inherits its parent's
+        self.__run_hooks: Optional[StepFunctionHooks] = None
+        self.__run_path: List[str] = [name]
 
         self.__steps: Dict[str, StepParams] = {}  # Steps of the workflow
         self.__current_step = None  # The current step being executed
@@ -192,7 +213,13 @@ class StepFunction:
             raise ValueError(f"Step '{name}' already exists in steps")
 
         async def sub_func(last_result):
-            await sub_step_function.execute(initial_input=last_result)
+            await sub_step_function._execute(
+                initial_input=last_result,
+                hooks=sub_step_function.hooks
+                if sub_step_function.hooks is not None
+                else self.__run_hooks,
+                path=self.__run_path + [_sub_path_label(name, sub_step_function)],
+            )
             self.__context.update(sub_step_function.context)
 
             if sub_step_function.status == StepFunctionStatus.FAILED:
@@ -218,6 +245,10 @@ class StepFunction:
             raise ValueError(f"Step '{name}' not found in steps")
 
         self.__current_step = name
+
+    def set_hooks(self, hooks: Optional[StepFunctionHooks]):
+        """Set the lifecycle hooks notified as the workflow runs (None removes them)."""
+        self.__hooks = hooks
 
     def validate(self):
         """Validate the workflow configuration before execution."""
@@ -257,15 +288,32 @@ class StepFunction:
             if step["is_sub_step_function"]:
                 sub_step_function = cast("StepFunction", step["sub_step_function"])
                 sub_step_function._validate(
-                    path=path + [f"{step_name} ({sub_step_function.name})"]
-                    if step_name != sub_step_function.name
-                    else path + [step_name]
+                    path=path + [_sub_path_label(step_name, sub_step_function)]
                 )
 
     async def execute(self, initial_input: Any = None):
         """Execute the workflow."""
 
+        await self._execute(initial_input, hooks=self.__hooks, path=[self.__name])
+
+    async def _execute(
+        self,
+        initial_input: Any,
+        hooks: Optional[StepFunctionHooks],
+        path: List[str],
+    ):
+        """Execute the workflow, reporting to ``hooks`` under the workflow ``path``.
+
+        ``path`` is the chain of step-function names from the outermost
+        workflow down to this one, as in _validate(); sub-step functions are
+        run through here so their events carry the full path.
+        """
+
         self.validate()
+
+        self.__run_hooks = hooks
+        self.__run_path = path
+        workflow = " -> ".join(path)
 
         self.__status = StepFunctionStatus.RUNNING
 
@@ -275,95 +323,173 @@ class StepFunction:
 
         self.__last_result = initial_input
 
-        while self.__current_step:
-            step = self.__steps[self.__current_step]
-            try:
-                if step["parallel"]:
-                    results = await self._execute_parallel(
-                        cast(Dict[str, Callable[[Any], Any]], step["func"]),
-                        step["stop_on_failure"],
-                    )
+        run_started_at = utc_now()
+        run_started = monotonic()
+        await self._emit(
+            "on_workflow_start",
+            WorkflowEvent(
+                workflow=workflow,
+                status=self.__status,
+                input=initial_input,
+                started_at=run_started_at,
+            ),
+        )
 
-                    self.__last_result = results
-                    self.__context[self.__current_step] = results
+        run_error: Optional[BaseException] = None
+        try:
+            while self.__current_step:
+                await self._execute_current_step(workflow)
+        except BaseException as exc:
+            run_error = exc
+            self.__status = StepFunctionStatus.FAILED
+            raise
+        finally:
+            await self._emit(
+                "on_workflow_end",
+                WorkflowEvent(
+                    workflow=workflow,
+                    status=self.__status,
+                    input=initial_input,
+                    started_at=run_started_at,
+                    output=self.__last_result,
+                    error=run_error,
+                    finished_at=utc_now(),
+                    duration=monotonic() - run_started,
+                ),
+            )
 
-                    self.__logger.info(
-                        f"Parallel step '{self.__current_step}' succeeded with results: {results}"
-                    )
+    async def _execute_current_step(self, workflow: str):
+        """Execute the current step, route to the next one and report both to the hooks."""
+
+        step_name = cast(str, self.__current_step)
+        step = self.__steps[step_name]
+        step_input = self.__last_result
+
+        started_at = utc_now()
+        started = monotonic()
+        await self._emit(
+            "on_step_start",
+            StepEvent(
+                workflow=workflow,
+                step=step_name,
+                task=None,
+                input=step_input,
+                started_at=started_at,
+            ),
+        )
+
+        def _ended(**fields: Any) -> StepEvent:
+            return StepEvent(
+                workflow=workflow,
+                step=step_name,
+                task=None,
+                input=step_input,
+                started_at=started_at,
+                finished_at=utc_now(),
+                duration=monotonic() - started,
+                **fields,
+            )
+
+        try:
+            if step["parallel"]:
+                results = await self._execute_parallel(
+                    cast(Dict[str, Callable[[Any], Any]], step["func"]),
+                    step["stop_on_failure"],
+                    workflow=workflow,
+                    step_name=step_name,
+                )
+
+                self.__last_result = results
+                self.__context[step_name] = results
+
+                self.__logger.info(
+                    f"Parallel step '{step_name}' succeeded with results: {results}"
+                )
+            else:
+                result = await self._execute_step(
+                    cast(Callable[[Any], Any], step["func"]), self.__last_result
+                )
+
+                self.__last_result = result
+                self.__context[step_name] = result
+
+                self.__logger.info(f"Step '{step_name}' succeeded")
+
+            next_step = None
+
+            if step["branch"]:
+                if callable(step["branch"]):
+                    next_step = step["branch"](self.__last_result)
                 else:
-                    result = await self._execute_step(
-                        cast(Callable[[Any], Any], step["func"]), self.__last_result
+                    next_step = step["branch"].get(self.__last_result)
+
+                if next_step is None:
+                    self.__logger.warning(
+                        f"Step '{step_name}': branch did not resolve to a next step "
+                        f"for result '{self.__last_result}'. Workflow will end."
+                    )
+                elif next_step not in self.__steps:
+                    self.__logger.warning(
+                        f"Step '{step_name}': branch resolved to '{next_step}' "
+                        "which does not exist in steps. This will cause a failure."
                     )
 
-                    self.__last_result = result
-                    self.__context[self.__current_step] = result
+            self.__current_step = next_step or step["next_step"]
 
-                    self.__logger.info(f"Step '{self.__current_step}' succeeded")
+        except CancelledError as exc:
+            self.__logger.warning(f"Step '{step_name}' was cancelled")
 
-                next_step = None
+            self.__status = StepFunctionStatus.FAILED
 
-                if step["branch"]:
-                    if callable(step["branch"]):
-                        next_step = step["branch"](self.__last_result)
-                    else:
-                        next_step = step["branch"].get(self.__last_result)
+            await self._emit("on_step_failure", _ended(error=exc))
 
-                    if next_step is None:
-                        self.__logger.warning(
-                            f"Step '{self.__current_step}': branch did not resolve to a next step "
-                            f"for result '{self.__last_result}'. Workflow will end."
-                        )
-                    elif next_step not in self.__steps:
-                        self.__logger.warning(
-                            f"Step '{self.__current_step}': branch resolved to '{next_step}' "
-                            "which does not exist in steps. This will cause a failure."
-                        )
+            raise
 
-                self.__current_step = next_step or step["next_step"]
+        except Exception as exc:
+            self.__logger.exception(f"Step '{step_name}' failed. Exception: {exc}")
 
-            except Exception as exc:
+            exc_value = exc.args[0] if exc.args else exc
+
+            self.__context[step_name] = exc_value
+
+            self.__status = StepFunctionStatus.FAILED
+
+            self.__logger.debug(
+                f"StepFunction - {self.__name} - Status - {self.__status.value}"
+            )
+
+            await self._emit(
+                "on_step_failure", _ended(error=exc, next_step=step["on_failure"])
+            )
+
+            if step["on_failure"]:
                 self.__logger.exception(
-                    f"Step '{self.__current_step}' failed. Exception: {exc}"
+                    f"Executing failure step: {step['on_failure']} for '{step_name}'"
                 )
 
-                exc_value = exc.args[0] if exc.args else exc
-
-                self.__context[cast(str, self.__current_step)] = exc_value
-
-                if step["on_failure"]:
-                    self.__logger.exception(
-                        f"Executing failure step: {step['on_failure']} for '{self.__current_step}'"
-                    )
-
-                    self.__current_step = step["on_failure"]
-                    self.__last_result = exc_value
-
-                    self.__status = StepFunctionStatus.FAILED
-
-                    self.__logger.debug(
-                        f"StepFunction - {self.__name} - Status - {self.__status.value}"
-                    )
-                else:
-                    self.__logger.exception(
-                        f"No failure step defined for '{self.__current_step}'. Raising Exception."
-                    )
-
-                    self.__status = StepFunctionStatus.FAILED
-
-                    self.__logger.debug(
-                        f"StepFunction - {self.__name} - Status - {self.__status.value}"
-                    )
-
-                    raise StepExecutionError(exc)
-
-            if not self.__current_step and self.__status != StepFunctionStatus.FAILED:
-                # If no more steps, mark as COMPLETED
-
-                self.__status = StepFunctionStatus.COMPLETED
-
-                self.__logger.debug(
-                    f"StepFunction - {self.__name} - Status - {self.__status.value}"
+                self.__current_step = step["on_failure"]
+                self.__last_result = exc_value
+            else:
+                self.__logger.exception(
+                    f"No failure step defined for '{step_name}'. Raising Exception."
                 )
+
+                raise StepExecutionError(exc)
+
+        else:
+            await self._emit(
+                "on_step_success",
+                _ended(output=self.__last_result, next_step=self.__current_step),
+            )
+
+        if not self.__current_step and self.__status != StepFunctionStatus.FAILED:
+            # If no more steps, mark as COMPLETED
+
+            self.__status = StepFunctionStatus.COMPLETED
+
+            self.__logger.debug(
+                f"StepFunction - {self.__name} - Status - {self.__status.value}"
+            )
 
     async def _execute_step(self, func: Callable, input_value: Any):
         """Execute a single step, handling async functions."""
@@ -373,30 +499,72 @@ class StepFunction:
             return func(input_value)
 
     async def _execute_parallel(
-        self, func_dict: Dict[str, Callable[[Any], Any]], stop_on_failure: bool = False
+        self,
+        func_dict: Dict[str, Callable[[Any], Any]],
+        stop_on_failure: bool = False,
+        workflow: Optional[str] = None,
+        step_name: Optional[str] = None,
     ):
-        """Execute the steps in parallel without blocking the event loop."""
+        """Execute the steps in parallel without blocking the event loop.
+
+        Each task is reported to the hooks as its own step event, with
+        ``task`` set to its name.
+        """
         loop = get_running_loop()
         results = {}
         errors = []
+        step_input = self.__last_result
 
-        async def _run_one(func: Callable[[Any], Any]) -> Any:
-            if iscoroutinefunction(func):
-                return await func(self.__last_result)
-            return await loop.run_in_executor(None, func, self.__last_result)
+        async def _run_one(task: str, func: Callable[[Any], Any]) -> Any:
+            started_at = utc_now()
+            started = monotonic()
+            await self._emit(
+                "on_step_start",
+                StepEvent(
+                    workflow=cast(str, workflow),
+                    step=cast(str, step_name),
+                    task=task,
+                    input=step_input,
+                    started_at=started_at,
+                ),
+            )
+
+            def _ended(**fields: Any) -> StepEvent:
+                return StepEvent(
+                    workflow=cast(str, workflow),
+                    step=cast(str, step_name),
+                    task=task,
+                    input=step_input,
+                    started_at=started_at,
+                    finished_at=utc_now(),
+                    duration=monotonic() - started,
+                    **fields,
+                )
+
+            try:
+                if iscoroutinefunction(func):
+                    result = await func(step_input)
+                else:
+                    result = await loop.run_in_executor(None, func, step_input)
+            except BaseException as exc:
+                await self._emit("on_step_failure", _ended(error=exc))
+                raise
+
+            await self._emit("on_step_success", _ended(output=result))
+            return result
 
         task_results = await gather(
-            *[_run_one(func) for func in func_dict.values()],
+            *[_run_one(task, func) for task, func in func_dict.items()],
             return_exceptions=True,
         )
 
-        for step_name, result in zip(func_dict.keys(), task_results):
+        for task, result in zip(func_dict.keys(), task_results):
             if isinstance(result, Exception):
-                self.__logger.exception(f"Parallel task '{step_name}' failed: {result}")
-                results[step_name] = result.args[0] if result.args else result
-                errors.append((step_name, result))
+                self.__logger.exception(f"Parallel task '{task}' failed: {result}")
+                results[task] = result.args[0] if result.args else result
+                errors.append((task, result))
             else:
-                results[step_name] = result
+                results[task] = result
 
         if errors:
             self.__logger.error(f"Some parallel tasks failed: {errors}")
@@ -406,6 +574,25 @@ class StepFunction:
                 raise ParallelStepExecutionError(errors)
 
         return results
+
+    async def _emit(self, hook_name: str, event: Union[StepEvent, WorkflowEvent]):
+        """Call a hook for this run, awaiting it if it's a coroutine.
+
+        A hook that raises is logged and ignored: hooks observe the workflow,
+        they never change its routing or status.
+        """
+        hooks = self.__run_hooks
+        if hooks is None:
+            return
+
+        try:
+            result = getattr(hooks, hook_name)(event)
+            if isawaitable(result):
+                await result
+        except Exception:
+            self.__logger.exception(
+                f"StepFunction - {self.__name} - Hook '{hook_name}' raised; ignoring"
+            )
 
     def visualize(self):
         """Visualize the workflow."""
@@ -511,6 +698,11 @@ class StepFunction:
         return self.__name
 
     @property
+    def hooks(self) -> Optional[StepFunctionHooks]:
+        """Returns the lifecycle hooks set on the step function, if any."""
+        return self.__hooks
+
+    @property
     def steps(self):
         """Returns the steps of the step function."""
         return self.__steps.copy()
@@ -541,3 +733,11 @@ class StepFunction:
 
     def __repr__(self):
         return str(self)
+
+
+def _sub_path_label(step_name: str, sub_step_function: StepFunction) -> str:
+    """How a sub-step function appears in a workflow path: its step name, plus
+    its own name when the two differ (e.g. "SubStep (SUB_FLOW)")."""
+    if step_name != sub_step_function.name:
+        return f"{step_name} ({sub_step_function.name})"
+    return step_name
