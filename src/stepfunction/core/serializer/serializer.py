@@ -91,13 +91,6 @@ def _encode_step(
     elif isinstance(base_step, BaseStep):
         # Built from a BaseStep: the step's own settings, not the closure it built
         encoded["step"] = _encode_base_step(base_step, step_registry, step_name)
-    elif step["step_type"] is not None:
-        raise UnserializableStepError(
-            step_name,
-            str(step["step_type"]),
-            "it was built from a BaseStep, but its instance wasn't kept "
-            "(a StepParams without 'base_step'), so its settings are unknown.",
-        )
     else:
         func = cast(Callable[[Any], Any], step["func"])
         encoded["func"] = _name_for_or_raise(step_registry, func, step_name)
