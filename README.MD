@@ -13,6 +13,8 @@
 - **Branching Logic**: Direct workflows based on conditions.
 - **Sub-Step Functions**: Modularize workflows by embedding sub-step functions.
 - **Visualization**: Integrated support for visualizing the workflow graph as a Mermaid flowchart.
+- **Declarative Workflows**: Export a workflow to JSON (`to_dict` / `to_json`) and load it back (`from_dict` / `from_json`) — built-in steps (`TimeoutStep`, `RetryStep`, `WaitStep`) and registered custom steps included, with their settings.
+- **Step Parameters**: Give a step fixed settings (`params=`), passed to its function and saved with the workflow — one registered function serves many steps.
 - **Lifecycle Hooks**: Get notified as the workflow and each step start, succeed or fail — with inputs, outputs, errors, routing and timings — to record run history, metrics or traces.
 
 ## Lifecycle Hooks
@@ -46,6 +48,58 @@ Events: `on_workflow_start`, `on_step_start`, `on_step_success`, `on_step_failur
 - A sub-step function without hooks of its own reports to its parent's hooks; its events carry the nested path, e.g. `"FLOW -> SubStep (SUB_FLOW)"`.
 - Hooks observe; they don't steer. An exception raised by a hook is logged and ignored.
 - If the run is cancelled, the running step and the workflow are reported with the `CancelledError`, which is then re-raised.
+
+## Declarative Workflows
+
+Register the functions a workflow uses, then export it and load it back:
+
+```python
+from stepfunction.registry.step_registry import register_step
+from stepfunction.steps import RetryStep, TimeoutStep
+
+register_step("call_api", call_api)
+
+sf = StepFunction("Fetch")
+sf.add_step("fetch", TimeoutStep(func=RetryStep(func=call_api, max_retries=3, delay=2), timeout=30))
+sf.set_start_step("fetch")
+
+spec = sf.to_dict()
+# {"name": "Fetch", "start_step": "fetch", "steps": {"fetch": {..., "step":
+#   {"type": "timeout", "timeout": 30,
+#    "func": {"type": "retry", "max_retries": 3, "delay": 2, "func": "call_api"}}}}}
+rebuilt = StepFunction.from_dict(spec)
+```
+
+A step built from a `BaseStep` is stored as `"step": {"type": ..., settings}`; a function it wraps is its registered name, or another step's spec. A dict `branch` must use string keys (`{"over": "block", "under": "allow"}`): JSON keys are strings, so `True` would come back as `"True"` and stop matching — `add_step` refuses other keys. A parallel step's tasks can be steps too (`{"fetch": RetryStep(...), "log": log_it}`), each stored the same way. To make a custom step exportable, give it a `spec_type`, implement `to_spec` and `from_spec`, and register it with `stepfunction.steps.register_step_type`.
+
+## Step Parameters
+
+A step can carry fixed settings. Its function is then called with them as a second argument, next to the previous step's result, and they are saved in the workflow's JSON:
+
+```python
+def block_device(previous, params):
+    return f"blocked {previous['device']} for {params['minutes']} min"
+
+register_step("block_device", block_device)
+
+sf.add_step("short_block", block_device, params={"minutes": 10}, next_step="long_block")
+sf.add_step("long_block", block_device, params={"minutes": 60})
+# to_dict(): "short_block": {"func": "block_device", "params": {"minutes": 10}, ...}
+```
+
+A branch router takes settings the same way with `branch_params`, so a condition is data you can store and edit:
+
+```python
+def above(result, params):
+    return params["then"] if result[params["field"]] > params["above"] else params["else"]
+
+register_step("above", above)
+sf.add_step("check", check_usage, branch=above,
+            branch_params={"field": "used_mb", "above": 100, "then": "block", "else": "allow"})
+# to_dict(): "check": {"func": "check_usage", "branch": "above", "branch_params": {...}, ...}
+```
+
+Steps and routers without params are called with the previous result only, as before. `params` must be JSON values; `TimeoutStep` and `RetryStep` pass them on to the function they wrap, and each task of a parallel step gets them.
 
 ## Logging
 

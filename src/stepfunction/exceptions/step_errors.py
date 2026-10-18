@@ -33,18 +33,27 @@ class UnregisteredFunctionError(Exception):
 
 
 class UnserializableStepError(Exception):
-    """Error raised when a step cannot be represented in a declarative spec.
+    """Error raised when a step cannot be represented in a declarative spec:
+    it (or one of a parallel step's tasks) was built from a BaseStep subclass
+    that has no ``spec_type`` — a custom step that doesn't implement
+    ``to_spec``/``from_spec``."""
 
-    Currently applies to any step built from a BaseStep instance (e.g.
-    RetryStep, TimeoutStep, WaitStep) — only the built closure survives
-    add_step(), not the original instance/config needed to reconstruct it.
-    """
-
-    def __init__(self, step_name: str, step_type: object):
+    def __init__(self, step_name: str, step_class: str):
         self.message = (
-            f"Step '{step_name}' cannot be serialized: it was built from a "
-            f"BaseStep instance (step_type={step_type}). Serializing "
-            "BaseStep-derived steps (RetryStep, TimeoutStep, WaitStep, or "
-            "custom BaseStep subclasses) is not yet supported."
+            f"Step '{step_name}' cannot be serialized: {step_class} has no "
+            "spec_type. Give it one, implement to_spec() and from_spec(), and "
+            "register it with stepfunction.steps.register_step_type()."
+        )
+        super().__init__(self.message)
+
+
+class UnknownStepTypeError(Exception):
+    """Error raised when a spec names a step type no class is registered for."""
+
+    def __init__(self, name: str):
+        self.message = (
+            f"No step type is registered under the name '{name}'. Register its "
+            "class with stepfunction.steps.register_step_type() before loading "
+            "this workflow spec."
         )
         super().__init__(self.message)
