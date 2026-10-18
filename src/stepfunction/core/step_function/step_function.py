@@ -174,7 +174,7 @@ class StepFunction:
         ],
         next_step: Optional[str] = None,
         on_failure: Optional[str] = None,
-        branch: Optional[Union[Dict[Any, str], Callable[[Any], str]]] = None,
+        branch: Optional[Union[Dict[str, str], Callable[[Any], str]]] = None,
         parallel: bool = False,
         stop_on_failure: bool = False,
         params: Optional[Dict[str, Any]] = None,
@@ -187,6 +187,10 @@ class StepFunction:
         ``func(previous_result, params)`` — each task of a parallel step too —
         instead of ``func(previous_result)``.
 
+        A dict ``branch`` maps a step's result to the next step; its keys must
+        be strings (they are JSON keys when the workflow is exported, and
+        ``True`` would come back as ``"True"`` and no longer match).
+
         ``branch_params`` are the same for a callable ``branch``: the router
         is called as ``branch(result, branch_params)``, so a condition's
         settings (``{"field": "used_mb", "above": 100}``) are data.
@@ -194,6 +198,15 @@ class StepFunction:
 
         if name in self.__steps:
             raise ValueError(f"Step '{name}' already exists in steps")
+
+        if isinstance(branch, dict):
+            wrong = [key for key in branch if not isinstance(key, str)]
+            if wrong:
+                raise ValueError(
+                    f"Step '{name}': branch keys must be strings, not {wrong!r}. "
+                    "Return a string from the step (e.g. 'yes' / 'no'), or route "
+                    "with a callable branch."
+                )
 
         if params is not None:
             params = _json_params(name, params)

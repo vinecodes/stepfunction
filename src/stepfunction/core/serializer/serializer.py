@@ -105,7 +105,7 @@ def _encode_step(
         if callable(branch):
             encoded["branch"] = _name_for_or_raise(step_registry, branch, step_name)
         else:
-            encoded["branch"] = {str(key): value for key, value in branch.items()}
+            encoded["branch"] = dict(branch)  # string keys: add_step refuses others
 
     return encoded
 

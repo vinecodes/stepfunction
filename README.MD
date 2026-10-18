@@ -70,7 +70,7 @@ spec = sf.to_dict()
 rebuilt = StepFunction.from_dict(spec)
 ```
 
-A step built from a `BaseStep` is stored as `"step": {"type": ..., settings}`; a function it wraps is its registered name, or another step's spec. A parallel step's tasks can be steps too (`{"fetch": RetryStep(...), "log": log_it}`), each stored the same way. To make a custom step exportable, give it a `spec_type`, implement `to_spec` and `from_spec`, and register it with `stepfunction.steps.register_step_type`.
+A step built from a `BaseStep` is stored as `"step": {"type": ..., settings}`; a function it wraps is its registered name, or another step's spec. A dict `branch` must use string keys (`{"over": "block", "under": "allow"}`): JSON keys are strings, so `True` would come back as `"True"` and stop matching — `add_step` refuses other keys. A parallel step's tasks can be steps too (`{"fetch": RetryStep(...), "log": log_it}`), each stored the same way. To make a custom step exportable, give it a `spec_type`, implement `to_spec` and `from_spec`, and register it with `stepfunction.steps.register_step_type`.
 
 ## Step Parameters
 
