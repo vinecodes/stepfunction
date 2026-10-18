@@ -39,7 +39,9 @@ class WaitStep(BaseStep):
         """Return an async function that sleeps for ``duration`` seconds."""
         duration = self.duration
 
-        async def wait(input_value: Any) -> Any:
+        async def wait(
+            input_value: Any, *params: Any
+        ) -> Any:  # params: nothing to pass on
             self.__logger.debug(f"WaitStep - sleeping for {duration}s")
             await sleep(duration)
             self.__logger.debug(f"WaitStep - resumed after {duration}s")

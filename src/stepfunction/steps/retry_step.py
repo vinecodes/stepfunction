@@ -59,7 +59,7 @@ class RetryStep(BaseStep):
         max_retries = self.max_retries
         delay = self.delay
 
-        async def run(input_value: Any) -> Any:
+        async def run(input_value: Any, *params: Any) -> Any:
             self.__logger.debug(
                 f"RetryStep - executing with max_retries={max_retries}, delay={delay}s"
             )
@@ -67,9 +67,10 @@ class RetryStep(BaseStep):
 
             for attempt in range(max_retries + 1):
                 try:
+                    # params (the step's, when it has them) go on to the wrapped function
                     if iscoroutinefunction(func):
-                        return await func(input_value)
-                    return func(input_value)
+                        return await func(input_value, *params)
+                    return func(input_value, *params)
                 except Exception as exc:
                     last_exc = exc
                     self.__logger.warning(

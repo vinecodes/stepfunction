@@ -85,10 +85,11 @@ class StepFunction:
             produced by to_dict()/to_json(), resolving function names via the registry.
 
     Protected Methods:
-        _execute_step(func, input_value):
+        _execute_step(func, input_value, params=None):
             Execute a single step, handling asynchronous and synchronous functions appropriately.
+            A step with params is called with them as a second argument.
 
-        _execute_parallel(func_dict, stop_on_failure=False):
+        _execute_parallel(func_dict, stop_on_failure=False, params=None):
             Execute parallel steps concurrently. Store the results for each step in the context, including exceptions
             if any step fails. If `stop_on_failure` is True, halt all parallel executions if one of the steps fails.
 
@@ -175,11 +176,21 @@ class StepFunction:
         branch: Optional[Union[Dict[Any, str], Callable[[Any], str]]] = None,
         parallel: bool = False,
         stop_on_failure: bool = False,
+        params: Optional[Dict[str, Any]] = None,
     ):
-        """Add a step to the workflow."""
+        """Add a step to the workflow.
+
+        ``params`` are fixed settings for this step (JSON values: they are
+        exported with the workflow). A step given them is called as
+        ``func(previous_result, params)`` — each task of a parallel step too —
+        instead of ``func(previous_result)``.
+        """
 
         if name in self.__steps:
             raise ValueError(f"Step '{name}' already exists in steps")
+
+        if params is not None:
+            params = _json_params(name, params)
 
         if branch is not None and next_step is not None:
             raise ValueError(
@@ -209,6 +220,7 @@ class StepFunction:
             "is_sub_step_function": False,
             "step_type": step_type,
             "base_step": base_step,
+            "params": params,
             "sub_step_function": None,
         }
 
@@ -249,6 +261,7 @@ class StepFunction:
             "is_sub_step_function": True,
             "step_type": None,
             "base_step": None,
+            "params": None,
             "sub_step_function": sub_step_function,
         }
 
@@ -410,6 +423,7 @@ class StepFunction:
                     step["stop_on_failure"],
                     workflow=workflow,
                     step_name=step_name,
+                    params=step.get("params"),
                 )
 
                 self.__last_result = results
@@ -420,7 +434,9 @@ class StepFunction:
                 )
             else:
                 result = await self._execute_step(
-                    cast(Callable[[Any], Any], step["func"]), self.__last_result
+                    cast(Callable[[Any], Any], step["func"]),
+                    self.__last_result,
+                    step.get("params"),
                 )
 
                 self.__last_result = result
@@ -504,12 +520,16 @@ class StepFunction:
                 f"StepFunction - {self.__name} - Status - {self.__status.value}"
             )
 
-    async def _execute_step(self, func: Callable, input_value: Any):
-        """Execute a single step, handling async functions."""
+    async def _execute_step(
+        self, func: Callable, input_value: Any, params: Optional[Dict[str, Any]] = None
+    ):
+        """Execute a single step, handling async functions; a step with
+        params gets them as a second argument."""
+        args = (input_value,) if params is None else (input_value, params)
         if iscoroutinefunction(func):
-            return await func(input_value)
+            return await func(*args)
         else:
-            return func(input_value)
+            return func(*args)
 
     async def _execute_parallel(
         self,
@@ -517,6 +537,7 @@ class StepFunction:
         stop_on_failure: bool = False,
         workflow: Optional[str] = None,
         step_name: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
     ):
         """Execute the steps in parallel without blocking the event loop.
 
@@ -527,6 +548,7 @@ class StepFunction:
         results = {}
         errors = []
         step_input = self.__last_result
+        args = (step_input,) if params is None else (step_input, params)
 
         async def _run_one(task: str, func: Callable[[Any], Any]) -> Any:
             started_at = utc_now()
@@ -556,9 +578,9 @@ class StepFunction:
 
             try:
                 if iscoroutinefunction(func):
-                    result = await func(step_input)
+                    result = await func(*args)
                 else:
-                    result = await loop.run_in_executor(None, func, step_input)
+                    result = await loop.run_in_executor(None, func, *args)
             except BaseException as exc:
                 await self._emit("on_step_failure", _ended(error=exc))
                 raise
@@ -754,3 +776,20 @@ def _sub_path_label(step_name: str, sub_step_function: StepFunction) -> str:
     if step_name != sub_step_function.name:
         return f"{step_name} ({sub_step_function.name})"
     return step_name
+
+
+def _json_params(step_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """A copy of a step's params, refused unless they are JSON values (they
+    are exported with the workflow, so a later change to the caller's dict
+    doesn't change the step)."""
+    from json import dumps, loads
+
+    if not isinstance(params, dict):
+        raise ValueError(f"Step '{step_name}': params must be a dict")
+    try:
+        return loads(dumps(params))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Step '{step_name}': params must be JSON values (strings, numbers, "
+            f"booleans, None, lists and dicts): {exc}"
+        ) from None

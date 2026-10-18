@@ -95,6 +95,9 @@ def _encode_step(
         func = cast(Callable[[Any], Any], step["func"])
         encoded["func"] = _name_for_or_raise(step_registry, func, step_name)
 
+    if step.get("params") is not None:
+        encoded["params"] = step["params"]
+
     branch = step["branch"]
     if branch is not None:
         if callable(branch):
@@ -203,6 +206,7 @@ def decode_step_function(
             branch=branch,
             parallel=step_data.get("parallel", False),
             stop_on_failure=step_data.get("stop_on_failure", False),
+            params=step_data.get("params"),
         )
 
     start_step = data.get("start_step")

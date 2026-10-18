@@ -52,15 +52,16 @@ class TimeoutStep(BaseStep):
         func = build_callable(self.func)
         timeout = self.timeout
 
-        async def run(input_value: Any) -> Any:
+        async def run(input_value: Any, *params: Any) -> Any:
             self.__logger.debug(f"TimeoutStep - executing with timeout of {timeout}s")
             try:
+                # params (the step's, when it has them) go on to the wrapped function
                 if iscoroutinefunction(func):
-                    return await wait_for(func(input_value), timeout=timeout)
+                    return await wait_for(func(input_value, *params), timeout=timeout)
                 else:
                     loop = get_running_loop()
                     return await wait_for(
-                        loop.run_in_executor(None, func, input_value),
+                        loop.run_in_executor(None, func, input_value, *params),
                         timeout=timeout,
                     )
             except AsyncTimeoutError:

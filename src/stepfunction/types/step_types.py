@@ -19,4 +19,5 @@ class StepParams(TypedDict):
     # The instance a step was built from — or, for a parallel step, the
     # instances its tasks were built from, by task name (for export)
     base_step: Optional[Union["BaseStep", Dict[str, "BaseStep"]]]
+    params: Optional[Dict[str, Any]]  # fixed settings, passed as the second argument
     sub_step_function: Optional["StepFunction"]
