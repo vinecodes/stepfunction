@@ -79,17 +79,25 @@ def _encode_step(
         )
         return encoded
 
-    if step["step_type"] is not None:
-        # Built from a BaseStep: the step's own settings, not the closure it built
-        encoded["step"] = _encode_base_step(
-            cast(BaseStep, step["base_step"]), step_registry, step_name
-        )
-    elif step["parallel"]:
+    base_step = step.get("base_step")  # absent from a StepParams built by hand
+    if step["parallel"]:
+        # Each task: its registered name, or the spec of the step it was built from
         func_map = cast(Dict[str, Callable[[Any], Any]], step["func"])
+        task_steps = cast(Dict[str, BaseStep], base_step or {})
         encoded["func"] = {
-            slot: _name_for_or_raise(step_registry, fn, step_name)
+            slot: _encode_func_ref(task_steps.get(slot, fn), step_registry, step_name)
             for slot, fn in func_map.items()
         }
+    elif isinstance(base_step, BaseStep):
+        # Built from a BaseStep: the step's own settings, not the closure it built
+        encoded["step"] = _encode_base_step(base_step, step_registry, step_name)
+    elif step["step_type"] is not None:
+        raise UnserializableStepError(
+            step_name,
+            str(step["step_type"]),
+            "it was built from a BaseStep, but its instance wasn't kept "
+            "(a StepParams without 'base_step'), so its settings are unknown.",
+        )
     else:
         func = cast(Callable[[Any], Any], step["func"])
         encoded["func"] = _name_for_or_raise(step_registry, func, step_name)
@@ -180,7 +188,8 @@ def decode_step_function(
             func: Any = _decode_base_step(step_data["step"], step_registry)
         elif isinstance(step_data["func"], dict):
             func = {
-                slot: step_registry.get(ref) for slot, ref in step_data["func"].items()
+                slot: _decode_func_ref(ref, step_registry)
+                for slot, ref in step_data["func"].items()
             }
         else:
             func = step_registry.get(step_data["func"])

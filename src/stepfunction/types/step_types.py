@@ -16,5 +16,7 @@ class StepParams(TypedDict):
     stop_on_failure: bool
     is_sub_step_function: bool
     step_type: Optional[StepType]
-    base_step: Optional["BaseStep"]  # the instance a step was built from (for export)
+    # The instance a step was built from — or, for a parallel step, the
+    # instances its tasks were built from, by task name (for export)
+    base_step: Optional[Union["BaseStep", Dict[str, "BaseStep"]]]
     sub_step_function: Optional["StepFunction"]

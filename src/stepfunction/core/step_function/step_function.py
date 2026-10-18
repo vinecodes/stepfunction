@@ -14,7 +14,7 @@ from stepfunction.exceptions.step_errors import (
     StepExecutionError,
 )
 from stepfunction.hooks import StepEvent, StepFunctionHooks, WorkflowEvent
-from stepfunction.steps.base import BaseStep
+from stepfunction.steps.base import BaseStep, build_callable
 from stepfunction.types.step_types import StepParams
 from stepfunction.utils.logger import setup_logger
 from stepfunction.utils.utils import utc_now
@@ -165,7 +165,11 @@ class StepFunction:
     def add_step(
         self,
         name: str,
-        func: Union[Callable[[Any], Any], Dict[str, Callable[[Any], Any]], BaseStep],
+        func: Union[
+            Callable[[Any], Any],
+            Dict[str, Union[Callable[[Any], Any], BaseStep]],
+            BaseStep,
+        ],
         next_step: Optional[str] = None,
         on_failure: Optional[str] = None,
         branch: Optional[Union[Dict[Any, str], Callable[[Any], str]]] = None,
@@ -187,6 +191,13 @@ class StepFunction:
         if isinstance(func, BaseStep):
             step_type, base_step = func.step_type, func
             func = func.build()
+        elif isinstance(func, dict):
+            # A parallel step's tasks may be steps too: each runs what it builds,
+            # and the instances are kept by task name (for export)
+            base_step = {
+                task: fn for task, fn in func.items() if isinstance(fn, BaseStep)
+            } or None
+            func = {task: build_callable(fn) for task, fn in func.items()}
 
         self.__steps[name] = {
             "func": func,

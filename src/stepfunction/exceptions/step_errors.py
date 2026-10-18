@@ -1,3 +1,6 @@
+from typing import Optional
+
+
 class StepExecutionError(Exception):
     """Error raised when a step fails."""
 
@@ -34,14 +37,16 @@ class UnregisteredFunctionError(Exception):
 
 class UnserializableStepError(Exception):
     """Error raised when a step cannot be represented in a declarative spec:
-    it was built from a BaseStep subclass that has no ``spec_type`` (a custom
-    step that doesn't implement ``to_spec``/``from_spec``)."""
+    it (or one of a parallel step's tasks) was built from a BaseStep subclass
+    that has no ``spec_type`` — a custom step that doesn't implement
+    ``to_spec``/``from_spec`` — or from a BaseStep whose instance wasn't kept."""
 
-    def __init__(self, step_name: str, step_class: str):
-        self.message = (
-            f"Step '{step_name}' cannot be serialized: {step_class} has no "
-            "spec_type. Give it one, implement to_spec() and from_spec(), and "
-            "register it with stepfunction.steps.register_step_type()."
+    def __init__(self, step_name: str, step_class: str, reason: Optional[str] = None):
+        self.message = f"Step '{step_name}' cannot be serialized: " + (
+            reason
+            or f"{step_class} has no spec_type. Give it one, implement to_spec() "
+            "and from_spec(), and register it with "
+            "stepfunction.steps.register_step_type()."
         )
         super().__init__(self.message)
 
