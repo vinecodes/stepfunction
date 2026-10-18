@@ -13,6 +13,7 @@
 - **Branching Logic**: Direct workflows based on conditions.
 - **Sub-Step Functions**: Modularize workflows by embedding sub-step functions.
 - **Visualization**: Integrated support for visualizing the workflow graph as a Mermaid flowchart.
+- **Declarative Workflows**: Export a workflow to JSON (`to_dict` / `to_json`) and load it back (`from_dict` / `from_json`) — built-in steps (`TimeoutStep`, `RetryStep`, `WaitStep`) and registered custom steps included, with their settings.
 - **Lifecycle Hooks**: Get notified as the workflow and each step start, succeed or fail — with inputs, outputs, errors, routing and timings — to record run history, metrics or traces.
 
 ## Lifecycle Hooks
@@ -46,6 +47,29 @@ Events: `on_workflow_start`, `on_step_start`, `on_step_success`, `on_step_failur
 - A sub-step function without hooks of its own reports to its parent's hooks; its events carry the nested path, e.g. `"FLOW -> SubStep (SUB_FLOW)"`.
 - Hooks observe; they don't steer. An exception raised by a hook is logged and ignored.
 - If the run is cancelled, the running step and the workflow are reported with the `CancelledError`, which is then re-raised.
+
+## Declarative Workflows
+
+Register the functions a workflow uses, then export it and load it back:
+
+```python
+from stepfunction.registry.step_registry import register_step
+from stepfunction.steps import RetryStep, TimeoutStep
+
+register_step("call_api", call_api)
+
+sf = StepFunction("Fetch")
+sf.add_step("fetch", TimeoutStep(func=RetryStep(func=call_api, max_retries=3, delay=2), timeout=30))
+sf.set_start_step("fetch")
+
+spec = sf.to_dict()
+# {"name": "Fetch", "start_step": "fetch", "steps": {"fetch": {..., "step":
+#   {"type": "timeout", "timeout": 30,
+#    "func": {"type": "retry", "max_retries": 3, "delay": 2, "func": "call_api"}}}}}
+rebuilt = StepFunction.from_dict(spec)
+```
+
+A step built from a `BaseStep` is stored as `"step": {"type": ..., settings}`; a function it wraps is its registered name, or another step's spec. To make a custom step exportable, give it a `spec_type`, implement `to_spec` and `from_spec`, and register it with `stepfunction.steps.register_step_type`.
 
 ## Logging
 

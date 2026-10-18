@@ -183,9 +183,9 @@ class StepFunction:
                 "Use 'branch' to control routing or 'next_step' for a fixed transition, not both."
             )
 
-        step_type = None
+        step_type, base_step = None, None
         if isinstance(func, BaseStep):
-            step_type = func.step_type
+            step_type, base_step = func.step_type, func
             func = func.build()
 
         self.__steps[name] = {
@@ -197,6 +197,7 @@ class StepFunction:
             "stop_on_failure": stop_on_failure,
             "is_sub_step_function": False,
             "step_type": step_type,
+            "base_step": base_step,
             "sub_step_function": None,
         }
 
@@ -236,6 +237,7 @@ class StepFunction:
             "stop_on_failure": False,
             "is_sub_step_function": True,
             "step_type": None,
+            "base_step": None,
             "sub_step_function": sub_step_function,
         }
 
@@ -641,9 +643,9 @@ class StepFunction:
         (often None after a completed run), not the original start step.
 
         Raises:
-            UnserializableStepError: If any step was built from a BaseStep
-                instance (RetryStep, TimeoutStep, WaitStep, or a custom
-                BaseStep subclass) — not yet supported.
+            UnserializableStepError: If a step was built from a custom
+                BaseStep subclass without a ``spec_type`` (TimeoutStep,
+                RetryStep and WaitStep are exported with their settings).
             UnregisteredFunctionError: If a step or branch function used in
                 this workflow has no registered name in ``step_registry``.
         """

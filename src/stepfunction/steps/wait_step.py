@@ -4,10 +4,10 @@ Author: Vineeth Penugonda
 """
 
 from asyncio import sleep
-from typing import Any, Callable
+from typing import Any, Callable, Dict
 
 from stepfunction.constants.enums import StepType
-from stepfunction.steps.base import BaseStep
+from stepfunction.steps.base import BaseStep, FuncRef
 from stepfunction.utils.logger import setup_logger
 
 
@@ -22,9 +22,12 @@ class WaitStep(BaseStep):
 
     Example:
         sf.add_step("pause", WaitStep(duration=5), next_step="next_step")
+
+    Spec: ``{"type": "wait", "duration": 5}``.
     """
 
     step_type: StepType = StepType.INBUILT
+    spec_type = "wait"
 
     def __init__(self, duration: float):
         if duration < 0:
@@ -43,3 +46,12 @@ class WaitStep(BaseStep):
             return input_value
 
         return wait
+
+    def to_spec(self, encode_func: Callable[[Any], FuncRef]) -> Dict[str, Any]:
+        return {"duration": self.duration}
+
+    @classmethod
+    def from_spec(
+        cls, spec: Dict[str, Any], decode_func: Callable[[FuncRef], Any]
+    ) -> "WaitStep":
+        return cls(duration=spec["duration"])

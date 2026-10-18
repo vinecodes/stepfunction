@@ -12,6 +12,8 @@ from stepfunction.exceptions.step_errors import (
 )
 from stepfunction.registry.step_registry import StepRegistry
 from stepfunction.registry.step_registry import registry as default_registry
+from stepfunction.steps import step_type_class
+from stepfunction.steps.base import BaseStep, FuncRef
 from stepfunction.types.step_types import StepParams
 
 
@@ -28,12 +30,41 @@ def _name_for_or_raise(
     return name
 
 
+def _encode_func_ref(func: Any, step_registry: StepRegistry, step_name: str) -> FuncRef:
+    """A function a step runs or wraps: its registered name, or — another
+    step — that step's spec."""
+    if isinstance(func, BaseStep):
+        return _encode_base_step(func, step_registry, step_name)
+    return _name_for_or_raise(step_registry, func, step_name)
+
+
+def _encode_base_step(
+    base_step: BaseStep, step_registry: StepRegistry, step_name: str
+) -> Dict[str, Any]:
+    """``{"type": <spec_type>, ...its settings}``."""
+    if not base_step.spec_type:
+        raise UnserializableStepError(step_name, type(base_step).__name__)
+    settings = base_step.to_spec(
+        lambda func: _encode_func_ref(func, step_registry, step_name)
+    )
+    return {"type": base_step.spec_type, **settings}
+
+
+def _decode_func_ref(ref: FuncRef, step_registry: StepRegistry) -> Any:
+    if isinstance(ref, dict):
+        return _decode_base_step(ref, step_registry)
+    return step_registry.get(ref)
+
+
+def _decode_base_step(spec: Dict[str, Any], step_registry: StepRegistry) -> BaseStep:
+    return step_type_class(spec["type"]).from_spec(
+        spec, lambda ref: _decode_func_ref(ref, step_registry)
+    )
+
+
 def _encode_step(
     step_name: str, step: StepParams, step_registry: StepRegistry
 ) -> Dict[str, Any]:
-    if step["step_type"] is not None:
-        raise UnserializableStepError(step_name, step["step_type"])
-
     encoded: Dict[str, Any] = {
         "next_step": step["next_step"],
         "on_failure": step["on_failure"],
@@ -48,7 +79,12 @@ def _encode_step(
         )
         return encoded
 
-    if step["parallel"]:
+    if step["step_type"] is not None:
+        # Built from a BaseStep: the step's own settings, not the closure it built
+        encoded["step"] = _encode_base_step(
+            cast(BaseStep, step["base_step"]), step_registry, step_name
+        )
+    elif step["parallel"]:
         func_map = cast(Dict[str, Callable[[Any], Any]], step["func"])
         encoded["func"] = {
             slot: _name_for_or_raise(step_registry, fn, step_name)
@@ -76,10 +112,14 @@ def encode_step_function(
     Recurses into nested sub-step-functions by calling itself again, so
     arbitrary nesting depth is handled without special-casing.
 
+    A step built from a BaseStep (TimeoutStep, RetryStep, WaitStep, or a
+    registered custom step) is exported as ``"step": {"type": ..., settings}``
+    in place of ``"func"``; a function it wraps is its registered name, or
+    the nested step's spec.
+
     Raises:
-        UnserializableStepError: If any step was built from a BaseStep
-            instance (RetryStep, TimeoutStep, WaitStep, or a custom
-            BaseStep subclass) — not yet supported.
+        UnserializableStepError: If a step was built from a BaseStep
+            subclass without a ``spec_type``.
         UnregisteredFunctionError: If a step or branch function used in
             ``sf`` has no registered name in ``step_registry``.
     """
@@ -115,6 +155,8 @@ def decode_step_function(
         UnregisteredFunctionError: If a referenced function name isn't
             registered in ``step_registry`` (defaults to the package's
             default singleton registry if not given).
+        UnknownStepTypeError: If a ``"step"`` names a type no class is
+            registered for.
         ValueError: If the reconstructed workflow fails validate().
     """
     step_registry = step_registry or default_registry
@@ -134,13 +176,14 @@ def decode_step_function(
             )
             continue
 
-        func_spec = step_data["func"]
-        if isinstance(func_spec, dict):
-            func: Any = {
-                slot: step_registry.get(ref) for slot, ref in func_spec.items()
+        if "step" in step_data:
+            func: Any = _decode_base_step(step_data["step"], step_registry)
+        elif isinstance(step_data["func"], dict):
+            func = {
+                slot: step_registry.get(ref) for slot, ref in step_data["func"].items()
             }
         else:
-            func = step_registry.get(func_spec)
+            func = step_registry.get(step_data["func"])
 
         branch_spec = step_data.get("branch")
         if branch_spec is None:
