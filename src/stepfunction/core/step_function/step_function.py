@@ -14,7 +14,7 @@ from stepfunction.exceptions.step_errors import (
     StepExecutionError,
 )
 from stepfunction.hooks import StepEvent, StepFunctionHooks, WorkflowEvent
-from stepfunction.steps.base import BaseStep
+from stepfunction.steps.base import BaseStep, build_callable
 from stepfunction.types.step_types import StepParams
 from stepfunction.utils.logger import setup_logger
 from stepfunction.utils.utils import utc_now
@@ -50,7 +50,8 @@ class StepFunction:
             - StepFunctionStatus.FAILED: The workflow encountered an error and went to a failure handler or failed entirely.
 
     Methods:
-        add_step(name, func, next_step=None, on_failure=None, branch=None, parallel=False, stop_on_failure=False):
+        add_step(name, func, next_step=None, on_failure=None, branch=None, parallel=False, stop_on_failure=False,
+                 params=None, branch_params=None):
             Add a step to the workflow.
 
         set_start_step(name):
@@ -85,10 +86,11 @@ class StepFunction:
             produced by to_dict()/to_json(), resolving function names via the registry.
 
     Protected Methods:
-        _execute_step(func, input_value):
+        _execute_step(func, input_value, params=None):
             Execute a single step, handling asynchronous and synchronous functions appropriately.
+            A step with params is called with them as a second argument.
 
-        _execute_parallel(func_dict, stop_on_failure=False):
+        _execute_parallel(func_dict, stop_on_failure=False, params=None):
             Execute parallel steps concurrently. Store the results for each step in the context, including exceptions
             if any step fails. If `stop_on_failure` is True, halt all parallel executions if one of the steps fails.
 
@@ -165,17 +167,55 @@ class StepFunction:
     def add_step(
         self,
         name: str,
-        func: Union[Callable[[Any], Any], Dict[str, Callable[[Any], Any]], BaseStep],
+        func: Union[
+            Callable[[Any], Any],
+            Dict[str, Union[Callable[[Any], Any], BaseStep]],
+            BaseStep,
+        ],
         next_step: Optional[str] = None,
         on_failure: Optional[str] = None,
-        branch: Optional[Union[Dict[Any, str], Callable[[Any], str]]] = None,
+        branch: Optional[Union[Dict[str, str], Callable[[Any], str]]] = None,
         parallel: bool = False,
         stop_on_failure: bool = False,
+        params: Optional[Dict[str, Any]] = None,
+        branch_params: Optional[Dict[str, Any]] = None,
     ):
-        """Add a step to the workflow."""
+        """Add a step to the workflow.
+
+        ``params`` are fixed settings for this step (JSON values: they are
+        exported with the workflow). A step given them is called as
+        ``func(previous_result, params)`` — each task of a parallel step too —
+        instead of ``func(previous_result)``.
+
+        A dict ``branch`` maps a step's result to the next step; its keys must
+        be strings (they are JSON keys when the workflow is exported, and
+        ``True`` would come back as ``"True"`` and no longer match).
+
+        ``branch_params`` are the same for a callable ``branch``: the router
+        is called as ``branch(result, branch_params)``, so a condition's
+        settings (``{"field": "used_mb", "above": 100}``) are data.
+        """
 
         if name in self.__steps:
             raise ValueError(f"Step '{name}' already exists in steps")
+
+        if isinstance(branch, dict):
+            wrong = [key for key in branch if not isinstance(key, str)]
+            if wrong:
+                raise ValueError(
+                    f"Step '{name}': branch keys must be strings, not {wrong!r}. "
+                    "Return a string from the step (e.g. 'yes' / 'no'), or route "
+                    "with a callable branch."
+                )
+
+        if params is not None:
+            params = _json_params(name, params)
+        if branch_params is not None:
+            if not callable(branch):
+                raise ValueError(
+                    f"Step '{name}': branch_params need a callable branch (a router) to pass them to"
+                )
+            branch_params = _json_params(name, branch_params)
 
         if branch is not None and next_step is not None:
             raise ValueError(
@@ -183,10 +223,17 @@ class StepFunction:
                 "Use 'branch' to control routing or 'next_step' for a fixed transition, not both."
             )
 
-        step_type = None
+        step_type, base_step = None, None
         if isinstance(func, BaseStep):
-            step_type = func.step_type
+            step_type, base_step = func.step_type, func
             func = func.build()
+        elif isinstance(func, dict):
+            # A parallel step's tasks may be steps too: each runs what it builds,
+            # and the instances are kept by task name (for export)
+            base_step = {
+                task: fn for task, fn in func.items() if isinstance(fn, BaseStep)
+            } or None
+            func = {task: build_callable(fn) for task, fn in func.items()}
 
         self.__steps[name] = {
             "func": func,
@@ -197,6 +244,9 @@ class StepFunction:
             "stop_on_failure": stop_on_failure,
             "is_sub_step_function": False,
             "step_type": step_type,
+            "base_step": base_step,
+            "params": params,
+            "branch_params": branch_params,
             "sub_step_function": None,
         }
 
@@ -236,6 +286,9 @@ class StepFunction:
             "stop_on_failure": False,
             "is_sub_step_function": True,
             "step_type": None,
+            "base_step": None,
+            "params": None,
+            "branch_params": None,
             "sub_step_function": sub_step_function,
         }
 
@@ -397,6 +450,7 @@ class StepFunction:
                     step["stop_on_failure"],
                     workflow=workflow,
                     step_name=step_name,
+                    params=step.get("params"),
                 )
 
                 self.__last_result = results
@@ -407,7 +461,9 @@ class StepFunction:
                 )
             else:
                 result = await self._execute_step(
-                    cast(Callable[[Any], Any], step["func"]), self.__last_result
+                    cast(Callable[[Any], Any], step["func"]),
+                    self.__last_result,
+                    step.get("params"),
                 )
 
                 self.__last_result = result
@@ -419,7 +475,10 @@ class StepFunction:
 
             if step["branch"]:
                 if callable(step["branch"]):
-                    next_step = step["branch"](self.__last_result)
+                    router_args = (self.__last_result,)
+                    if step.get("branch_params") is not None:
+                        router_args += (step["branch_params"],)
+                    next_step = step["branch"](*router_args)
                 else:
                     next_step = step["branch"].get(self.__last_result)
 
@@ -491,12 +550,16 @@ class StepFunction:
                 f"StepFunction - {self.__name} - Status - {self.__status.value}"
             )
 
-    async def _execute_step(self, func: Callable, input_value: Any):
-        """Execute a single step, handling async functions."""
+    async def _execute_step(
+        self, func: Callable, input_value: Any, params: Optional[Dict[str, Any]] = None
+    ):
+        """Execute a single step, handling async functions; a step with
+        params gets them as a second argument."""
+        args = (input_value,) if params is None else (input_value, params)
         if iscoroutinefunction(func):
-            return await func(input_value)
+            return await func(*args)
         else:
-            return func(input_value)
+            return func(*args)
 
     async def _execute_parallel(
         self,
@@ -504,6 +567,7 @@ class StepFunction:
         stop_on_failure: bool = False,
         workflow: Optional[str] = None,
         step_name: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
     ):
         """Execute the steps in parallel without blocking the event loop.
 
@@ -514,6 +578,7 @@ class StepFunction:
         results = {}
         errors = []
         step_input = self.__last_result
+        args = (step_input,) if params is None else (step_input, params)
 
         async def _run_one(task: str, func: Callable[[Any], Any]) -> Any:
             started_at = utc_now()
@@ -543,9 +608,9 @@ class StepFunction:
 
             try:
                 if iscoroutinefunction(func):
-                    result = await func(step_input)
+                    result = await func(*args)
                 else:
-                    result = await loop.run_in_executor(None, func, step_input)
+                    result = await loop.run_in_executor(None, func, *args)
             except BaseException as exc:
                 await self._emit("on_step_failure", _ended(error=exc))
                 raise
@@ -641,9 +706,9 @@ class StepFunction:
         (often None after a completed run), not the original start step.
 
         Raises:
-            UnserializableStepError: If any step was built from a BaseStep
-                instance (RetryStep, TimeoutStep, WaitStep, or a custom
-                BaseStep subclass) — not yet supported.
+            UnserializableStepError: If a step was built from a custom
+                BaseStep subclass without a ``spec_type`` (TimeoutStep,
+                RetryStep and WaitStep are exported with their settings).
             UnregisteredFunctionError: If a step or branch function used in
                 this workflow has no registered name in ``step_registry``.
         """
@@ -741,3 +806,20 @@ def _sub_path_label(step_name: str, sub_step_function: StepFunction) -> str:
     if step_name != sub_step_function.name:
         return f"{step_name} ({sub_step_function.name})"
     return step_name
+
+
+def _json_params(step_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """A copy of a step's params, refused unless they are JSON values (they
+    are exported with the workflow, so a later change to the caller's dict
+    doesn't change the step)."""
+    from json import dumps, loads
+
+    if not isinstance(params, dict):
+        raise ValueError(f"Step '{step_name}': params must be a dict")
+    try:
+        return loads(dumps(params))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Step '{step_name}': params must be JSON values (strings, numbers, "
+            f"booleans, None, lists and dicts): {exc}"
+        ) from None
