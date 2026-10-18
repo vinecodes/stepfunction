@@ -20,4 +20,5 @@ class StepParams(TypedDict):
     # instances its tasks were built from, by task name (for export)
     base_step: Optional[Union["BaseStep", Dict[str, "BaseStep"]]]
     params: Optional[Dict[str, Any]]  # fixed settings, passed as the second argument
+    branch_params: Optional[Dict[str, Any]]  # the same, for a callable branch (router)
     sub_step_function: Optional["StepFunction"]

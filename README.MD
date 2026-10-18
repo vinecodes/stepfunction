@@ -87,7 +87,19 @@ sf.add_step("long_block", block_device, params={"minutes": 60})
 # to_dict(): "short_block": {"func": "block_device", "params": {"minutes": 10}, ...}
 ```
 
-Steps without `params` are called with the previous result only, as before. `params` must be JSON values; `TimeoutStep` and `RetryStep` pass them on to the function they wrap, and each task of a parallel step gets them.
+A branch router takes settings the same way with `branch_params`, so a condition is data you can store and edit:
+
+```python
+def above(result, params):
+    return params["then"] if result[params["field"]] > params["above"] else params["else"]
+
+register_step("above", above)
+sf.add_step("check", check_usage, branch=above,
+            branch_params={"field": "used_mb", "above": 100, "then": "block", "else": "allow"})
+# to_dict(): "check": {"func": "check_usage", "branch": "above", "branch_params": {...}, ...}
+```
+
+Steps and routers without params are called with the previous result only, as before. `params` must be JSON values; `TimeoutStep` and `RetryStep` pass them on to the function they wrap, and each task of a parallel step gets them.
 
 ## Logging
 

@@ -50,7 +50,8 @@ class StepFunction:
             - StepFunctionStatus.FAILED: The workflow encountered an error and went to a failure handler or failed entirely.
 
     Methods:
-        add_step(name, func, next_step=None, on_failure=None, branch=None, parallel=False, stop_on_failure=False):
+        add_step(name, func, next_step=None, on_failure=None, branch=None, parallel=False, stop_on_failure=False,
+                 params=None, branch_params=None):
             Add a step to the workflow.
 
         set_start_step(name):
@@ -177,6 +178,7 @@ class StepFunction:
         parallel: bool = False,
         stop_on_failure: bool = False,
         params: Optional[Dict[str, Any]] = None,
+        branch_params: Optional[Dict[str, Any]] = None,
     ):
         """Add a step to the workflow.
 
@@ -184,6 +186,10 @@ class StepFunction:
         exported with the workflow). A step given them is called as
         ``func(previous_result, params)`` — each task of a parallel step too —
         instead of ``func(previous_result)``.
+
+        ``branch_params`` are the same for a callable ``branch``: the router
+        is called as ``branch(result, branch_params)``, so a condition's
+        settings (``{"field": "used_mb", "above": 100}``) are data.
         """
 
         if name in self.__steps:
@@ -191,6 +197,12 @@ class StepFunction:
 
         if params is not None:
             params = _json_params(name, params)
+        if branch_params is not None:
+            if not callable(branch):
+                raise ValueError(
+                    f"Step '{name}': branch_params need a callable branch (a router) to pass them to"
+                )
+            branch_params = _json_params(name, branch_params)
 
         if branch is not None and next_step is not None:
             raise ValueError(
@@ -221,6 +233,7 @@ class StepFunction:
             "step_type": step_type,
             "base_step": base_step,
             "params": params,
+            "branch_params": branch_params,
             "sub_step_function": None,
         }
 
@@ -262,6 +275,7 @@ class StepFunction:
             "step_type": None,
             "base_step": None,
             "params": None,
+            "branch_params": None,
             "sub_step_function": sub_step_function,
         }
 
@@ -448,7 +462,10 @@ class StepFunction:
 
             if step["branch"]:
                 if callable(step["branch"]):
-                    next_step = step["branch"](self.__last_result)
+                    router_args = (self.__last_result,)
+                    if step.get("branch_params") is not None:
+                        router_args += (step["branch_params"],)
+                    next_step = step["branch"](*router_args)
                 else:
                     next_step = step["branch"].get(self.__last_result)
 

@@ -97,6 +97,8 @@ def _encode_step(
 
     if step.get("params") is not None:
         encoded["params"] = step["params"]
+    if step.get("branch_params") is not None:
+        encoded["branch_params"] = step["branch_params"]
 
     branch = step["branch"]
     if branch is not None:
@@ -207,6 +209,7 @@ def decode_step_function(
             parallel=step_data.get("parallel", False),
             stop_on_failure=step_data.get("stop_on_failure", False),
             params=step_data.get("params"),
+            branch_params=step_data.get("branch_params"),
         )
 
     start_step = data.get("start_step")
